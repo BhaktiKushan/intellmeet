@@ -397,10 +397,23 @@ button, a, input, select, textarea {
     width: 42px !important;
     height: 42px !important;
     min-width: 42px !important;
+    border-radius: 50% !important;
+    padding: 0 !important;
     flex-shrink: 0 !important;
   }
-  .meeting-controls-dock .btn-danger {
-    padding: 0 14px !important;
+  .meeting-controls-dock .end-call-label {
+    display: none !important;
+  }
+  .meeting-controls-dock .meeting-end-call-btn {
+    width: 44px !important;
+    min-width: 44px !important;
+    height: 42px !important;
+    border-radius: 50% !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
   }
 
   /* Navbar Elements */

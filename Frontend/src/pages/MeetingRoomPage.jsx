@@ -1440,11 +1440,12 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
         {/* Leave / End Call */}
         <button
           onClick={handleLeaveOrEnd}
-          className="btn btn-danger"
+          className="btn btn-danger meeting-end-call-btn"
           style={{ padding: '0 20px', height: '48px', borderRadius: '24px', gap: '8px' }}
+          title="End Call"
         >
           <PhoneOff size={18} />
-          <span>End Call</span>
+          <span className="end-call-label">End Call</span>
         </button>
 
       </div>
