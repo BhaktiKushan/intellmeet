@@ -128,7 +128,8 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
     setInLobby(false);
 
     // Initialize Socket.io connection
-    const socket = io('/', {
+    const socketUrl = import.meta.env.VITE_BACKEND_URL || '/';
+    const socket = io(socketUrl, {
       transports: ['websocket', 'polling']
     });
     socketRef.current = socket;
