@@ -79,22 +79,21 @@ const PORT = process.env.PORT || 5000;
 
 // Initialize Server & Database
 const startServer = async () => {
-  try {
-    await connectDB();
-    await seedDatabaseIfEmpty();
+  server.listen(PORT, async () => {
+    console.log(`\n======================================================`);
+    console.log(`🚀 IntellMeet Enterprise Server running on port ${PORT}`);
+    console.log(`📡 Real-Time WebRTC & Socket.io Signaling Active`);
+    console.log(`🧠 AI Meeting Intelligence Engine: Operational`);
+    console.log(`🔗 Health Check: http://localhost:${PORT}/api/health`);
+    console.log(`======================================================\n`);
 
-    server.listen(PORT, () => {
-      console.log(`\n======================================================`);
-      console.log(`🚀 IntellMeet Enterprise Server running on port ${PORT}`);
-      console.log(`📡 Real-Time WebRTC & Socket.io Signaling Active`);
-      console.log(`🧠 AI Meeting Intelligence Engine: Operational`);
-      console.log(`🔗 Health Check: http://localhost:${PORT}/api/health`);
-      console.log(`======================================================\n`);
-    });
-  } catch (error) {
-    console.error('Fatal Server Boot Error:', error);
-    process.exit(1);
-  }
+    try {
+      await connectDB();
+      await seedDatabaseIfEmpty();
+    } catch (dbErr) {
+      console.warn('[Database] Initial connection notice:', dbErr.message);
+    }
+  });
 };
 
 startServer();

@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 import User from '../models/User.js';
 import Meeting from '../models/Meeting.js';
@@ -6,6 +7,11 @@ import Workspace from '../models/Workspace.js';
 import { v4 as uuidv4 } from 'uuid';
 
 export const seedDatabaseIfEmpty = async () => {
+  if (mongoose.connection.readyState !== 1) {
+    console.log('[Seed] Database not connected yet. Skipping initial seed.');
+    return;
+  }
+
   const userCount = await User.countDocuments();
   if (userCount > 0) {
     console.log('[Seed] Database already seeded. Skipping initial seed.');
