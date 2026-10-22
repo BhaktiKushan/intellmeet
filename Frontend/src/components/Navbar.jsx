@@ -11,12 +11,23 @@ import {
   User as UserIcon, 
   ShieldCheck, 
   Zap,
-  Sparkles
+  Sparkles,
+  Menu,
+  X
 } from 'lucide-react';
 
 export const Navbar = ({ activeTab, setActiveTab, onQuickNewMeeting }) => {
   const { user, isAuthenticated, logout, demoLogin } = useAuth();
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const navItems = [
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'meetings', label: 'Meetings', icon: Video },
+    { id: 'kanban', label: 'Kanban Board', icon: KanbanSquare },
+    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+    { id: 'docs', label: 'Project Docs', icon: FileText }
+  ];
 
   return (
     <header style={{
@@ -83,16 +94,10 @@ export const Navbar = ({ activeTab, setActiveTab, onQuickNewMeeting }) => {
         </div>
       </div>
 
-      {/* Navigation Links */}
+      {/* Navigation Links (Desktop) */}
       {isAuthenticated && (
-        <nav style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          {[
-            { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-            { id: 'meetings', label: 'Meetings', icon: Video },
-            { id: 'kanban', label: 'Kanban Board', icon: KanbanSquare },
-            { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-            { id: 'docs', label: 'Project Docs', icon: FileText }
-          ].map((item) => {
+        <nav className="navbar-desktop-links" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
             return (
@@ -125,12 +130,12 @@ export const Navbar = ({ activeTab, setActiveTab, onQuickNewMeeting }) => {
       )}
 
       {/* Right Action & User Controls */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+      <div className="navbar-right-controls" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         {isAuthenticated ? (
           <>
             <button
               onClick={onQuickNewMeeting}
-              className="btn btn-primary"
+              className="btn btn-primary navbar-new-meeting-btn"
               style={{ padding: '8px 14px', fontSize: '0.85rem' }}
             >
               <Plus size={16} />
@@ -164,7 +169,7 @@ export const Navbar = ({ activeTab, setActiveTab, onQuickNewMeeting }) => {
                     background: '#1e293b'
                   }}
                 />
-                <div style={{ textAlign: 'left', marginRight: '4px' }}>
+                <div className="navbar-profile-text" style={{ textAlign: 'left', marginRight: '4px' }}>
                   <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#f8fafc', lineHeight: 1.2 }}>
                     {user?.name?.split(' ')[0]}
                   </div>
@@ -264,7 +269,117 @@ export const Navbar = ({ activeTab, setActiveTab, onQuickNewMeeting }) => {
             </button>
           </div>
         )}
+
+        {/* Mobile Hamburger Toggle Button */}
+        <button
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          className="navbar-mobile-toggle"
+          aria-label="Toggle navigation menu"
+          style={{
+            background: 'transparent',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: '8px',
+            color: '#fff',
+            cursor: 'pointer',
+            padding: '7px'
+          }}
+        >
+          {mobileMenuOpen ? <X size={22} color="#818cf8" /> : <Menu size={22} />}
+        </button>
       </div>
+
+      {/* Mobile Slide-down Navigation Drawer */}
+      {mobileMenuOpen && (
+        <div className="navbar-mobile-drawer">
+          {isAuthenticated && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px' }}>
+              {navItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setActiveTab(item.id);
+                      setMobileMenuOpen(false);
+                    }}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      padding: '12px 16px',
+                      borderRadius: '10px',
+                      border: 'none',
+                      background: isActive ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255, 255, 255, 0.03)',
+                      color: isActive ? '#a5b4fc' : '#cbd5e1',
+                      fontFamily: 'var(--font-body)',
+                      fontWeight: isActive ? 600 : 500,
+                      fontSize: '0.95rem',
+                      cursor: 'pointer',
+                      textAlign: 'left'
+                    }}
+                  >
+                    <Icon size={18} color={isActive ? '#818cf8' : '#94a3b8'} />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {isAuthenticated ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', paddingTop: '12px', borderTop: '1px solid var(--border-subtle)' }}>
+              <button
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  onQuickNewMeeting();
+                }}
+                className="btn btn-primary"
+                style={{ width: '100%', padding: '12px', fontSize: '0.92rem' }}
+              >
+                <Plus size={18} />
+                <span>Start New Meeting</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  logout();
+                }}
+                className="btn btn-secondary"
+                style={{ width: '100%', padding: '12px', color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+              >
+                <LogOut size={16} />
+                <span>Sign Out ({user?.name?.split(' ')[0]})</span>
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <button
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  demoLogin('admin');
+                }}
+                className="btn btn-primary"
+                style={{ width: '100%', padding: '12px' }}
+              >
+                <Zap size={16} />
+                <span>Instant Demo (Admin)</span>
+              </button>
+              <button
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  demoLogin('member');
+                }}
+                className="btn btn-secondary"
+                style={{ width: '100%', padding: '12px' }}
+              >
+                <span>Demo (Member)</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </header>
   );
 };

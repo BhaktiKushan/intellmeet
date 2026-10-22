@@ -972,17 +972,20 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
     }}>
       
       {/* Top Header Bar */}
-      <div style={{
-        padding: '12px 24px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        background: 'rgba(14, 21, 36, 0.75)',
-        borderBottom: '1px solid var(--border-subtle)',
-        zIndex: 20
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <h2 style={{ fontSize: '1.15rem', color: '#fff', fontWeight: 700 }}>
+      <div 
+        className="meeting-top-bar"
+        style={{
+          padding: '12px 20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          background: 'rgba(14, 21, 36, 0.75)',
+          borderBottom: '1px solid var(--border-subtle)',
+          zIndex: 20
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <h2 style={{ fontSize: '1.1rem', color: '#fff', fontWeight: 700 }}>
             {meeting?.title || 'Enterprise Conference'}
           </h2>
 
@@ -1039,15 +1042,18 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
         
         {/* Video Grid Canvas */}
-        <div style={{
-          flex: 1,
-          padding: '16px',
-          display: 'grid',
-          gridTemplateColumns: participants.length > 0 ? 'repeat(auto-fit, minmax(360px, 1fr))' : '1fr',
-          gap: '16px',
-          alignContent: 'center',
-          overflowY: 'auto'
-        }}>
+        <div 
+          className="meeting-video-grid"
+          style={{
+            flex: 1,
+            padding: '16px',
+            display: 'grid',
+            gridTemplateColumns: participants.length > 0 ? 'repeat(auto-fit, minmax(280px, 1fr))' : '1fr',
+            gap: '16px',
+            alignContent: 'center',
+            overflowY: 'auto'
+          }}
+        >
           
           {/* Local User Video Tile */}
           <div style={{
@@ -1167,7 +1173,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
         {/* Slide-out Side Drawer (Chat / Participants / Shared Notes) */}
         {activeTab && (
           <div 
-            className="glass-panel"
+            className="meeting-side-drawer glass-panel"
             style={{
               width: '340px',
               height: '100%',
@@ -1315,17 +1321,20 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
       </div>
 
       {/* Bottom Controls Dock */}
-      <div style={{
-        height: '76px',
-        background: 'rgba(10, 15, 26, 0.95)',
-        borderTop: '1px solid var(--border-subtle)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '12px',
-        padding: '0 24px',
-        zIndex: 30
-      }}>
+      <div 
+        className="meeting-controls-dock"
+        style={{
+          height: '76px',
+          background: 'rgba(10, 15, 26, 0.95)',
+          borderTop: '1px solid var(--border-subtle)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '12px',
+          padding: '0 16px',
+          zIndex: 30
+        }}
+      >
         
         {/* Mic Toggle */}
         <button

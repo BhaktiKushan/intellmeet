@@ -174,19 +174,20 @@ export const KanbanPage = () => {
       </div>
 
       {/* Columns Container */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-        gap: '18px',
-        alignItems: 'start'
-      }}>
+      <div 
+        className="kanban-columns-container"
+        style={{
+          gap: '18px',
+          alignItems: 'start'
+        }}
+      >
         {COLUMNS.map(col => {
           const colTasks = filteredTasks.filter(t => t.status === col.id);
 
           return (
             <div
               key={col.id}
-              className="glass-panel"
+              className="glass-panel kanban-column-card"
               style={{
                 borderRadius: '16px',
                 padding: '16px',
