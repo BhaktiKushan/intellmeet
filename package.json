@@ -1,0 +1,13 @@
+{
+  "name": "intellmeet",
+  "version": "2.0.0",
+  "private": true,
+  "description": "IntellMeet - AI-Powered Enterprise Meeting & Collaboration Platform",
+  "scripts": {
+    "start": "npm run start --prefix Backend",
+    "backend": "npm run dev --prefix Backend",
+    "frontend": "npm run dev --prefix Frontend",
+    "build": "npm run build --prefix Frontend",
+    "seed": "npm run seed --prefix Backend"
+  }
+}
