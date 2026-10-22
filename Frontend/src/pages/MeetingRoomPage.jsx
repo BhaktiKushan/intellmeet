@@ -19,12 +19,95 @@ import {
   Edit3,
   Send,
   Radio,
-  Volume2,
-  Settings,
-  Shield,
-  Zap,
-  Smile
+  Zap
 } from 'lucide-react';
+
+const ICE_SERVERS = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' }
+  ]
+};
+
+// Component to render each connected remote peer's video & audio stream
+const RemoteVideoTile = ({ peer, stream }) => {
+  const videoRef = useRef(null);
+
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+    }
+  }, [stream]);
+
+  const hasVideoStream = stream && stream.getVideoTracks().length > 0 && !peer.isVideoOff;
+
+  return (
+    <div style={{
+      position: 'relative',
+      borderRadius: '16px',
+      overflow: 'hidden',
+      background: '#0d1322',
+      border: peer.isHandRaised ? '2px solid #f59e0b' : '1px solid var(--border-subtle)',
+      aspectRatio: '16/9',
+      maxHeight: '75vh',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      boxShadow: 'var(--shadow-md)'
+    }}>
+      {/* Remote Video Element (Unmuted so remote participant's voice is heard!) */}
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        style={{
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          display: hasVideoStream ? 'block' : 'none'
+        }}
+      />
+
+      {/* Avatar when remote camera is toggled off */}
+      {!hasVideoStream && (
+        <div style={{ textAlign: 'center' }}>
+          <img
+            src={peer.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${peer.name}`}
+            alt={peer.name}
+            style={{ width: '84px', height: '84px', borderRadius: '50%', marginBottom: '10px', objectFit: 'cover' }}
+          />
+          <div style={{ color: '#fff', fontWeight: 600 }}>{peer.name}</div>
+          <div style={{ fontSize: '0.75rem', color: '#a5b4fc', textTransform: 'capitalize' }}>
+            {peer.role || 'Participant'}
+          </div>
+        </div>
+      )}
+
+      {/* Peer Info Overlay */}
+      <div style={{
+        position: 'absolute',
+        bottom: '12px',
+        left: '12px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        background: 'rgba(0, 0, 0, 0.65)',
+        backdropFilter: 'blur(8px)',
+        padding: '4px 10px',
+        borderRadius: '20px',
+        fontSize: '0.8rem',
+        color: '#fff'
+      }}>
+        <span>{peer.name}</span>
+        {peer.isAudioMuted && <MicOff size={13} color="#f87171" />}
+        {peer.isHandRaised && <Hand size={13} color="#f59e0b" />}
+      </div>
+    </div>
+  );
+};
 
 export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   const { user } = useAuth();
@@ -33,6 +116,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   const [inLobby, setInLobby] = useState(true);
   const [meeting, setMeeting] = useState(null);
   const [localStream, setLocalStream] = useState(null);
+  const [remoteStreams, setRemoteStreams] = useState({}); // { [socketId]: MediaStream }
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
@@ -52,10 +136,18 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   // Refs
   const localVideoRef = useRef(null);
   const lobbyVideoRef = useRef(null);
+  const localStreamRef = useRef(null);
+  const peersRef = useRef({}); // { [socketId]: RTCPeerConnection }
+  const iceQueueRef = useRef({}); // { [socketId]: [candidate] }
   const screenShareTrackRef = useRef(null);
   const socketRef = useRef(null);
   const recognitionRef = useRef(null);
   const timerRef = useRef(null);
+
+  // Keep localStreamRef in sync
+  useEffect(() => {
+    localStreamRef.current = localStream;
+  }, [localStream]);
 
   // Load meeting details
   useEffect(() => {
@@ -86,6 +178,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
         });
         streamInstance = stream;
         setLocalStream(stream);
+        localStreamRef.current = stream;
         if (lobbyVideoRef.current) {
           lobbyVideoRef.current.srcObject = stream;
         }
@@ -123,11 +216,72 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
     return () => clearInterval(timerRef.current);
   }, [isRecording]);
 
+  // ----------------------------------------------------
+  // WebRTC Peer Connection Factory
+  // ----------------------------------------------------
+  const createPeerConnection = (targetSocketId, isInitiator, socket) => {
+    if (peersRef.current[targetSocketId]) {
+      return peersRef.current[targetSocketId];
+    }
+
+    const pc = new RTCPeerConnection(ICE_SERVERS);
+    peersRef.current[targetSocketId] = pc;
+
+    // Add local media tracks to peer connection
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => {
+        pc.addTrack(track, localStreamRef.current);
+      });
+    }
+
+    // Handle remote media track arrival (audio + video)
+    pc.ontrack = (event) => {
+      console.log(`[WebRTC] Received remote stream from peer ${targetSocketId}:`, event.streams[0]);
+      if (event.streams && event.streams[0]) {
+        setRemoteStreams((prev) => ({
+          ...prev,
+          [targetSocketId]: event.streams[0]
+        }));
+      }
+    };
+
+    // Forward ICE candidates to remote peer via Socket.io signaling
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.emit('ice-candidate', {
+          targetSocketId,
+          candidate: event.candidate
+        });
+      }
+    };
+
+    // If initiator, negotiate and send offer
+    if (isInitiator) {
+      pc.onnegotiationneeded = async () => {
+        try {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          socket.emit('offer', {
+            targetSocketId,
+            callerSocketId: socket.id,
+            sdp: offer
+          });
+        } catch (err) {
+          console.error('[WebRTC] Error creating offer:', err);
+        }
+      };
+    }
+
+    return pc;
+  };
+
+  // ----------------------------------------------------
   // Handle Socket.io connection & WebRTC signaling
+  // ----------------------------------------------------
   const joinMeetingRoom = () => {
     setInLobby(false);
 
-    // Initialize Socket.io connection
+    // Initialize Socket.io connection (pointing to Render backend or current host)
     const socketUrl = import.meta.env.VITE_BACKEND_URL || '/';
     const socket = io(socketUrl, {
       transports: ['websocket', 'polling']
@@ -146,20 +300,98 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
 
     // Existing participants in the room
     socket.on('all-users', (users) => {
+      console.log('[WebRTC] Received all-users list:', users);
       setParticipants(users);
+      // For each existing user, initiate a WebRTC peer connection
+      users.forEach((existingUser) => {
+        createPeerConnection(existingUser.socketId, true, socket);
+      });
     });
 
-    // New participant joined
+    // New participant joined the room
     socket.on('user-connected', (newUser) => {
+      console.log('[WebRTC] New user connected:', newUser);
       setParticipants(prev => {
         if (prev.some(p => p.socketId === newUser.socketId)) return prev;
         return [...prev, newUser];
       });
     });
 
+    // WebRTC Offer received
+    socket.on('offer', async ({ callerSocketId, sdp }) => {
+      console.log('[WebRTC] Handling offer from caller:', callerSocketId);
+      const pc = createPeerConnection(callerSocketId, false, socket);
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('answer', {
+          targetSocketId: callerSocketId,
+          callerSocketId: socket.id,
+          sdp: answer
+        });
+
+        // Drain any queued ICE candidates
+        if (iceQueueRef.current[callerSocketId]) {
+          for (const cand of iceQueueRef.current[callerSocketId]) {
+            await pc.addIceCandidate(new RTCIceCandidate(cand));
+          }
+          delete iceQueueRef.current[callerSocketId];
+        }
+      } catch (err) {
+        console.error('[WebRTC] Error handling offer:', err);
+      }
+    });
+
+    // WebRTC Answer received
+    socket.on('answer', async ({ callerSocketId, sdp }) => {
+      console.log('[WebRTC] Handling answer from:', callerSocketId);
+      const pc = peersRef.current[callerSocketId];
+      if (pc) {
+        try {
+          await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+          // Drain any queued ICE candidates
+          if (iceQueueRef.current[callerSocketId]) {
+            for (const cand of iceQueueRef.current[callerSocketId]) {
+              await pc.addIceCandidate(new RTCIceCandidate(cand));
+            }
+            delete iceQueueRef.current[callerSocketId];
+          }
+        } catch (err) {
+          console.error('[WebRTC] Error setting remote description from answer:', err);
+        }
+      }
+    });
+
+    // WebRTC ICE Candidate received
+    socket.on('ice-candidate', async ({ callerSocketId, candidate }) => {
+      const pc = peersRef.current[callerSocketId];
+      if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (err) {
+          console.warn('[WebRTC] Error adding ICE candidate:', err);
+        }
+      } else {
+        if (!iceQueueRef.current[callerSocketId]) {
+          iceQueueRef.current[callerSocketId] = [];
+        }
+        iceQueueRef.current[callerSocketId].push(candidate);
+      }
+    });
+
     // User disconnected
     socket.on('user-disconnected', ({ socketId }) => {
       setParticipants(prev => prev.filter(p => p.socketId !== socketId));
+      if (peersRef.current[socketId]) {
+        peersRef.current[socketId].close();
+        delete peersRef.current[socketId];
+      }
+      setRemoteStreams(prev => {
+        const next = { ...prev };
+        delete next[socketId];
+        return next;
+      });
     });
 
     // Media toggled by remote user
@@ -261,33 +493,35 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
 
   // Toggle Audio
   const toggleAudio = () => {
-    if (localStream) {
-      const audioTrack = localStream.getAudioTracks()[0];
+    const stream = localStreamRef.current;
+    if (stream) {
+      const audioTrack = stream.getAudioTracks()[0];
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
         setIsAudioMuted(!audioTrack.enabled);
+        if (socketRef.current) {
+          socketRef.current.emit('toggle-media', { roomId, type: 'audio', enabled: audioTrack.enabled });
+        }
       }
     } else {
       setIsAudioMuted(!isAudioMuted);
-    }
-    if (socketRef.current) {
-      socketRef.current.emit('toggle-media', { roomId, type: 'audio', enabled: isAudioMuted });
     }
   };
 
   // Toggle Video
   const toggleVideo = () => {
-    if (localStream) {
-      const videoTrack = localStream.getVideoTracks()[0];
+    const stream = localStreamRef.current;
+    if (stream) {
+      const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack) {
         videoTrack.enabled = !videoTrack.enabled;
         setIsVideoOff(!videoTrack.enabled);
+        if (socketRef.current) {
+          socketRef.current.emit('toggle-media', { roomId, type: 'video', enabled: videoTrack.enabled });
+        }
       }
     } else {
       setIsVideoOff(!isVideoOff);
-    }
-    if (socketRef.current) {
-      socketRef.current.emit('toggle-media', { roomId, type: 'video', enabled: isVideoOff });
     }
   };
 
@@ -303,6 +537,14 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = screenStream;
         }
+
+        // Replace video track for all connected peers
+        Object.values(peersRef.current).forEach((pc) => {
+          const sender = pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+          if (sender) {
+            sender.replaceTrack(screenTrack);
+          }
+        });
 
         screenTrack.onended = () => {
           stopScreenSharing();
@@ -320,8 +562,18 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
       screenShareTrackRef.current.stop();
     }
     setIsScreenSharing(false);
-    if (localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
+    if (localVideoRef.current && localStreamRef.current) {
+      localVideoRef.current.srcObject = localStreamRef.current;
+    }
+    // Restore original video track to all connected peers
+    const originalVideoTrack = localStreamRef.current?.getVideoTracks()[0];
+    if (originalVideoTrack) {
+      Object.values(peersRef.current).forEach((pc) => {
+        const sender = pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+        if (sender) {
+          sender.replaceTrack(originalVideoTrack);
+        }
+      });
     }
   };
 
@@ -356,15 +608,18 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch (e) {}
     }
-    if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop());
     }
+    // Close all peer connections
+    Object.values(peersRef.current).forEach((pc) => pc.close());
+    peersRef.current = {};
+
     if (socketRef.current) {
       socketRef.current.emit('leave-room');
       socketRef.current.disconnect();
     }
 
-    // If host or ending meeting, trigger AI intelligence generation
     if (meeting?._id) {
       try {
         await api.endMeeting(meeting._id);
@@ -621,7 +876,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
                 <img
                   src={user?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.name}`}
                   alt="avatar"
-                  style={{ width: '84px', height: '84px', borderRadius: '50%', marginBottom: '10px' }}
+                  style={{ width: '84px', height: '84px', borderRadius: '50%', marginBottom: '10px', objectFit: 'cover' }}
                 />
                 <div style={{ color: '#fff', fontWeight: 600 }}>{user?.name || 'You'}</div>
               </div>
@@ -648,57 +903,13 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
             </div>
           </div>
 
-          {/* Remote Connected Peer Video Tiles */}
+          {/* Remote Connected Peer Video & Audio Tiles */}
           {participants.map((peer) => (
-            <div
+            <RemoteVideoTile
               key={peer.socketId}
-              style={{
-                position: 'relative',
-                borderRadius: '16px',
-                overflow: 'hidden',
-                background: '#0d1322',
-                border: peer.isHandRaised ? '2px solid #f59e0b' : '1px solid var(--border-subtle)',
-                aspectRatio: '16/9',
-                maxHeight: '75vh',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: 'var(--shadow-md)'
-              }}
-            >
-              {/* Simulated / Remote peer visual avatar */}
-              <div style={{ textAlign: 'center' }}>
-                <img
-                  src={peer.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${peer.name}`}
-                  alt={peer.name}
-                  style={{ width: '84px', height: '84px', borderRadius: '50%', marginBottom: '10px' }}
-                />
-                <div style={{ color: '#fff', fontWeight: 600 }}>{peer.name}</div>
-                <div style={{ fontSize: '0.75rem', color: '#a5b4fc', textTransform: 'capitalize' }}>
-                  {peer.role || 'Participant'}
-                </div>
-              </div>
-
-              {/* Peer Info Overlay */}
-              <div style={{
-                position: 'absolute',
-                bottom: '12px',
-                left: '12px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                background: 'rgba(0, 0, 0, 0.65)',
-                backdropFilter: 'blur(8px)',
-                padding: '4px 10px',
-                borderRadius: '20px',
-                fontSize: '0.8rem',
-                color: '#fff'
-              }}>
-                <span>{peer.name}</span>
-                {peer.isAudioMuted && <MicOff size={13} color="#f87171" />}
-                {peer.isHandRaised && <Hand size={13} color="#f59e0b" />}
-              </div>
-            </div>
+              peer={peer}
+              stream={remoteStreams[peer.socketId]}
+            />
           ))}
 
         </div>

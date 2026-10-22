@@ -63,7 +63,7 @@ export const setupSocketIO = (io) => {
     // WebRTC Signaling: Offer
     socket.on('offer', ({ targetSocketId, callerSocketId, sdp }) => {
       io.to(targetSocketId).emit('offer', {
-        callerSocketId,
+        callerSocketId: callerSocketId || socket.id,
         sdp
       });
     });
@@ -71,7 +71,7 @@ export const setupSocketIO = (io) => {
     // WebRTC Signaling: Answer
     socket.on('answer', ({ targetSocketId, callerSocketId, sdp }) => {
       io.to(targetSocketId).emit('answer', {
-        callerSocketId,
+        callerSocketId: callerSocketId || socket.id,
         sdp
       });
     });
