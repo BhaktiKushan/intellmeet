@@ -138,10 +138,17 @@ router.put('/:id', protect, async (req, res, next) => {
 // End meeting and auto-generate AI Intelligence (Summary, Takeaways & Action Items)
 router.post('/:id/end', protect, async (req, res, next) => {
   try {
-    const meeting = await Meeting.findById(req.params.id);
+    const isObjectId = /^[0-9a-fA-F]{24}$/.test(req.params.id);
+    const query = isObjectId ? { _id: req.params.id } : { code: req.params.id };
+    let meeting = await Meeting.findOne(query);
 
     if (!meeting) {
-      return res.status(404).json({ success: false, message: 'Meeting not found' });
+      meeting = await Meeting.create({
+        title: `Meeting (${req.params.id})`,
+        code: req.params.id,
+        host: req.user._id,
+        status: 'ended'
+      });
     }
 
     meeting.status = 'ended';
@@ -149,8 +156,18 @@ router.post('/:id/end', protect, async (req, res, next) => {
     const durationMs = meeting.endedAt.getTime() - (meeting.startedAt ? meeting.startedAt.getTime() : meeting.createdAt.getTime());
     meeting.durationMinutes = Math.max(1, Math.round(durationMs / 60000));
 
-    // Generate AI intelligence if transcript exists or if none, generate baseline intelligence
-    const aiResults = await generateMeetingSummary(meeting.transcript, meeting.title);
+    // Combine transcript with in-meeting chat messages if transcript is empty
+    let transcriptToUse = (meeting.transcript && meeting.transcript.length > 0) ? meeting.transcript : [];
+    if (transcriptToUse.length === 0 && meeting.chatMessages && meeting.chatMessages.length > 0) {
+      transcriptToUse = meeting.chatMessages.map(c => ({
+        speaker: c.sender || 'Participant',
+        text: c.text,
+        timestamp: new Date(c.timestamp).toLocaleTimeString()
+      }));
+    }
+
+    // Generate AI intelligence using Google Gemini
+    const aiResults = await generateMeetingSummary(transcriptToUse, meeting.title);
     meeting.summary = aiResults.summary;
     meeting.keyTakeaways = aiResults.keyTakeaways;
     meeting.actionItems = aiResults.actionItems;
@@ -170,14 +187,26 @@ router.post('/:id/end', protect, async (req, res, next) => {
 // Manually trigger or re-generate AI intelligence for a meeting
 router.post('/:id/ai-intelligence', protect, async (req, res, next) => {
   try {
-    const meeting = await Meeting.findById(req.params.id);
+    const isObjectId = /^[0-9a-fA-F]{24}$/.test(req.params.id);
+    const query = isObjectId ? { _id: req.params.id } : { code: req.params.id };
+    let meeting = await Meeting.findOne(query);
 
     if (!meeting) {
       return res.status(404).json({ success: false, message: 'Meeting not found' });
     }
 
     const { transcript } = req.body;
-    const targetTranscript = (transcript && transcript.length > 0) ? transcript : meeting.transcript;
+    let targetTranscript = (transcript && transcript.length > 0) ? transcript : meeting.transcript;
+
+    if (!targetTranscript || targetTranscript.length === 0) {
+      if (meeting.chatMessages && meeting.chatMessages.length > 0) {
+        targetTranscript = meeting.chatMessages.map(c => ({
+          speaker: c.sender || 'Participant',
+          text: c.text,
+          timestamp: new Date(c.timestamp).toLocaleTimeString()
+        }));
+      }
+    }
 
     if (transcript && transcript.length > 0) {
       meeting.transcript = transcript;

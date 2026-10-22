@@ -28,17 +28,46 @@ export const PostMeetingDetailsPage = ({ meetingIdOrCode, onBack, onNavigateKanb
   const loadMeetingDetails = async () => {
     try {
       const res = await api.getMeeting(meetingIdOrCode);
-      setMeeting(res.data);
+      const meetingData = res.data;
+      setMeeting(meetingData);
+
       // Track existing converted tasks
       const converted = new Set();
-      (res.data.actionItems || []).forEach(item => {
+      (meetingData.actionItems || []).forEach(item => {
         if (item.taskId) converted.add(item.id);
       });
       setConvertedTasks(converted);
+
+      // If summary is not yet generated, auto-trigger Gemini intelligence
+      if (meetingData && (!meetingData.summary || !meetingData.keyTakeaways || meetingData.keyTakeaways.length === 0)) {
+        triggerAiGeneration(meetingData);
+      }
     } catch (err) {
       console.error('Failed to load meeting details:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const triggerAiGeneration = async (currentMeeting) => {
+    const targetId = currentMeeting?._id || meetingIdOrCode;
+    if (!targetId) return;
+
+    setReanalyzing(true);
+    try {
+      const res = await api.generateAiSummary(targetId, currentMeeting?.transcript || []);
+      if (res.data) {
+        setMeeting(prev => ({
+          ...(prev || currentMeeting),
+          summary: res.data.summary,
+          keyTakeaways: res.data.keyTakeaways,
+          actionItems: res.data.actionItems
+        }));
+      }
+    } catch (err) {
+      console.warn('Auto AI generation warning:', err.message);
+    } finally {
+      setReanalyzing(false);
     }
   };
 
@@ -48,7 +77,8 @@ export const PostMeetingDetailsPage = ({ meetingIdOrCode, onBack, onNavigateKanb
 
   const handleConvertToTask = async (actionItem) => {
     try {
-      await api.convertActionItemToTask(meeting._id, actionItem.id);
+      const targetId = meeting?._id || meetingIdOrCode;
+      await api.convertActionItemToTask(targetId, actionItem.id);
       setConvertedTasks(prev => new Set(prev).add(actionItem.id));
       setActionNotice(`Task "${actionItem.task.slice(0, 30)}..." pushed to Kanban board!`);
       setTimeout(() => setActionNotice(''), 4000);
@@ -61,14 +91,15 @@ export const PostMeetingDetailsPage = ({ meetingIdOrCode, onBack, onNavigateKanb
   const handleRegenerateAI = async () => {
     setReanalyzing(true);
     try {
-      const res = await api.generateAiSummary(meeting._id, meeting.transcript);
+      const targetId = meeting?._id || meetingIdOrCode;
+      const res = await api.generateAiSummary(targetId, meeting?.transcript || []);
       setMeeting(prev => ({
         ...prev,
         summary: res.data.summary,
         keyTakeaways: res.data.keyTakeaways,
         actionItems: res.data.actionItems
       }));
-      setActionNotice('AI Intelligence re-generated successfully!');
+      setActionNotice('AI Intelligence generated with Google Gemini 3.8 Flash!');
       setTimeout(() => setActionNotice(''), 3000);
     } catch (err) {
       alert('AI generation error: ' + err.message);

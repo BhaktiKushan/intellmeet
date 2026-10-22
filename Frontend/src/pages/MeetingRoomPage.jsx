@@ -140,6 +140,8 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   const peersRef = useRef({}); // { [socketId]: RTCPeerConnection }
   const iceQueueRef = useRef({}); // { [socketId]: [candidate] }
   const screenShareTrackRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const recordedChunksRef = useRef([]);
   const socketRef = useRef(null);
   const recognitionRef = useRef(null);
   const timerRef = useRef(null);
@@ -603,8 +605,115 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
     setChatInput('');
   };
 
+  // ----------------------------------------------------
+  // In-Meeting Video & Audio Recording (MediaRecorder)
+  // ----------------------------------------------------
+  const startRecording = async () => {
+    try {
+      recordedChunksRef.current = [];
+      let streamToRecord = null;
+
+      // Best user experience: capture meeting screen/tab with full video and audio
+      if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+        try {
+          streamToRecord = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: true
+          });
+        } catch (err) {
+          console.warn('[Recording] Screen picker canceled, falling back to camera stream:', err.message);
+          streamToRecord = localStreamRef.current;
+        }
+      } else {
+        streamToRecord = localStreamRef.current;
+      }
+
+      if (!streamToRecord) {
+        alert('No camera or display stream available to record.');
+        return;
+      }
+
+      let mimeType = 'video/webm;codecs=vp9,opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/webm;codecs=vp8,opus';
+      }
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/webm';
+      }
+      if (!MediaRecorder.isTypeSupported(mimeType) && MediaRecorder.isTypeSupported('video/mp4')) {
+        mimeType = 'video/mp4';
+      }
+
+      const options = mimeType && MediaRecorder.isTypeSupported(mimeType) ? { mimeType } : undefined;
+      const recorder = options ? new MediaRecorder(streamToRecord, options) : new MediaRecorder(streamToRecord);
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          recordedChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        if (recordedChunksRef.current.length > 0) {
+          const fileType = recorder.mimeType || 'video/webm';
+          const ext = fileType.includes('mp4') ? 'mp4' : 'webm';
+          const blob = new Blob(recordedChunksRef.current, { type: fileType });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.style.display = 'none';
+          a.href = url;
+          a.download = `IntellMeet_Meeting_${roomId}_${new Date().toISOString().slice(0, 10)}.${ext}`;
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(() => {
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+          }, 300);
+        }
+        setIsRecording(false);
+      };
+
+      // Automatically finalize recording if user stops sharing from browser banner
+      streamToRecord.getVideoTracks()[0]?.addEventListener('ended', () => {
+        if (recorder.state !== 'inactive') {
+          recorder.stop();
+        }
+      });
+
+      recorder.start(1000);
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+    } catch (err) {
+      console.error('[Recording Error]:', err);
+      alert('Could not start recording: ' + err.message);
+      setIsRecording(false);
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+  };
+
+  const toggleRecording = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
+
   // End / Leave Meeting
   const handleLeaveOrEnd = async () => {
+    // If currently recording, finalize and download the video file
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (recErr) {}
+    }
+
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch (e) {}
     }
@@ -620,9 +729,10 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
       socketRef.current.disconnect();
     }
 
-    if (meeting?._id) {
+    const targetMeetingId = meeting?._id || roomId;
+    if (targetMeetingId) {
       try {
-        await api.endMeeting(meeting._id);
+        await api.endMeeting(targetMeetingId);
       } catch (err) {
         console.warn('Meeting ended silently:', err.message);
       }
@@ -1173,12 +1283,21 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
 
         {/* Record Meeting */}
         <button
-          onClick={() => setIsRecording(!isRecording)}
+          onClick={toggleRecording}
           className={`btn ${isRecording ? 'btn-danger' : 'btn-secondary'}`}
-          style={{ width: '48px', height: '48px', borderRadius: '50%', padding: 0 }}
-          title="Record Call"
+          style={{
+            width: '48px',
+            height: '48px',
+            borderRadius: '50%',
+            padding: 0,
+            background: isRecording ? '#ef4444' : undefined,
+            color: '#fff',
+            boxShadow: isRecording ? '0 0 16px rgba(239, 68, 68, 0.6)' : 'none',
+            border: isRecording ? '1px solid #f87171' : '1px solid var(--border-subtle)'
+          }}
+          title={isRecording ? "Stop Recording (Downloads video file)" : "Start Recording"}
         >
-          <Circle size={18} fill={isRecording ? '#fff' : 'transparent'} />
+          <Circle size={18} fill={isRecording ? '#fff' : 'transparent'} color={isRecording ? '#fff' : 'currentColor'} />
         </button>
 
         <div style={{ width: '1px', height: '32px', background: 'var(--border-subtle)', margin: '0 4px' }} />
