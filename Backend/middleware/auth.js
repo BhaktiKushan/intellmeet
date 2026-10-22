@@ -43,12 +43,28 @@ export const generateTokens = (userId) => {
   const secret = process.env.JWT_SECRET || 'intellmeet_super_secret_jwt_key_2026';
   const refreshSecret = process.env.JWT_REFRESH_SECRET || 'intellmeet_super_refresh_jwt_key_2026';
 
+  // 200 days in seconds = 200 * 24 * 60 * 60 = 17,280,000 seconds
+  const DEFAULT_SECONDS = 17280000;
+
+  const parseExpiry = (val) => {
+    if (!val) return DEFAULT_SECONDS;
+    if (typeof val === 'number' && !isNaN(val)) return val;
+    const clean = String(val).replace(/['"]/g, '').trim();
+    if (!clean) return DEFAULT_SECONDS;
+    if (/^\d+$/.test(clean)) return parseInt(clean, 10);
+    if (/^\d+[smhdw]$/i.test(clean)) return clean;
+    return DEFAULT_SECONDS;
+  };
+
+  const accessExpiry = parseExpiry(process.env.JWT_EXPIRE);
+  const refreshExpiry = parseExpiry(process.env.JWT_REFRESH_EXPIRE);
+
   const accessToken = jwt.sign({ id: userId }, secret, {
-    expiresIn: process.env.JWT_EXPIRE || '200d'
+    expiresIn: accessExpiry
   });
 
   const refreshToken = jwt.sign({ id: userId }, refreshSecret, {
-    expiresIn: process.env.JWT_REFRESH_EXPIRE || '200d'
+    expiresIn: refreshExpiry
   });
 
   return { accessToken, refreshToken };
