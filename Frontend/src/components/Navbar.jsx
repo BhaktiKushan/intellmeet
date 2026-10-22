@@ -76,17 +76,6 @@ export const Navbar = ({ activeTab, setActiveTab, onQuickNewMeeting }) => {
             }}>
               Intell<span style={{ color: '#818cf8' }}>Meet</span>
             </span>
-            <span style={{
-              fontSize: '0.65rem',
-              fontWeight: 700,
-              padding: '2px 6px',
-              borderRadius: '4px',
-              background: 'rgba(99, 102, 241, 0.2)',
-              color: '#a5b4fc',
-              border: '1px solid rgba(99, 102, 241, 0.3)'
-            }}>
-              v2.0 AI
-            </span>
           </div>
           <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'block', marginTop: '-2px' }}>
             Enterprise Meeting Intelligence
