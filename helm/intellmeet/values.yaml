@@ -1,0 +1,21 @@
+replicaCount:
+  backend: 3
+  frontend: 2
+
+image:
+  backend:
+    repository: intellmeet/backend
+    tag: "2.0.0"
+    pullPolicy: IfNotPresent
+  frontend:
+    repository: intellmeet/frontend
+    tag: "2.0.0"
+    pullPolicy: IfNotPresent
+
+service:
+  backendPort: 5000
+  frontendPort: 80
+
+ingress:
+  enabled: true
+  host: meet.intellmeet.io

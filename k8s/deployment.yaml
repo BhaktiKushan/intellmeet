@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intellmeet-backend
+  labels:
+    app: intellmeet-backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: intellmeet-backend
+  template:
+    metadata:
+      labels:
+        app: intellmeet-backend
+    spec:
+      containers:
+        - name: backend
+          image: intellmeet/backend:latest
+          ports:
+            - containerPort: 5000
+          env:
+            - name: PORT
+              value: "5000"
+            - name: NODE_ENV
+              value: "production"
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intellmeet-frontend
+  labels:
+    app: intellmeet-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: intellmeet-frontend
+  template:
+    metadata:
+      labels:
+        app: intellmeet-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: intellmeet/frontend:latest
+          ports:
+            - containerPort: 80

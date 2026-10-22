@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: intellmeet-backend-service
+spec:
+  type: ClusterIP
+  selector:
+    app: intellmeet-backend
+  ports:
+    - port: 5000
+      targetPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: intellmeet-frontend-service
+spec:
+  type: ClusterIP
+  selector:
+    app: intellmeet-frontend
+  ports:
+    - port: 80
+      targetPort: 80

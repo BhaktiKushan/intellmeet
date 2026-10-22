@@ -1,0 +1,6 @@
+apiVersion: v2
+name: intellmeet
+description: A Helm chart for IntellMeet - AI-Powered Enterprise Meeting & Collaboration Platform
+type: application
+version: 2.0.0
+appVersion: "2.0.0"
