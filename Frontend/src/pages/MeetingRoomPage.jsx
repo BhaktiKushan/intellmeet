@@ -145,11 +145,17 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   const socketRef = useRef(null);
   const recognitionRef = useRef(null);
   const timerRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const remoteStreamsRef = useRef({});
 
-  // Keep localStreamRef in sync
+  // Keep localStreamRef and remoteStreamsRef in sync
   useEffect(() => {
     localStreamRef.current = localStream;
   }, [localStream]);
+
+  useEffect(() => {
+    remoteStreamsRef.current = remoteStreams;
+  }, [remoteStreams]);
 
   // Load meeting details
   useEffect(() => {
@@ -611,27 +617,105 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   const startRecording = async () => {
     try {
       recordedChunksRef.current = [];
-      let streamToRecord = null;
+      let displayStream = null;
 
-      // Best user experience: capture meeting screen/tab with full video and audio
+      // 1. Capture screen or tab
       if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
         try {
-          streamToRecord = await navigator.mediaDevices.getDisplayMedia({
+          displayStream = await navigator.mediaDevices.getDisplayMedia({
             video: true,
             audio: true
           });
         } catch (err) {
-          console.warn('[Recording] Screen picker canceled, falling back to camera stream:', err.message);
-          streamToRecord = localStreamRef.current;
+          console.warn('[Recording] Screen picker canceled or not supported:', err.message);
         }
-      } else {
-        streamToRecord = localStreamRef.current;
       }
 
-      if (!streamToRecord) {
-        alert('No camera or display stream available to record.');
+      // Determine video track
+      let videoTrack = null;
+      if (displayStream && displayStream.getVideoTracks().length > 0) {
+        videoTrack = displayStream.getVideoTracks()[0];
+      } else if (localStreamRef.current && localStreamRef.current.getVideoTracks().length > 0) {
+        videoTrack = localStreamRef.current.getVideoTracks()[0];
+      }
+
+      if (!videoTrack && (!localStreamRef.current || localStreamRef.current.getTracks().length === 0)) {
+        alert('No camera, microphone, or display stream available to record.');
         return;
       }
+
+      // 2. Multi-Audio Mixer using Web Audio API
+      // Mixes: (a) Local User Microphone + (b) All Remote Participants' Voices + (c) Screen/Tab Audio
+      let mixedAudioTrack = null;
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContextClass();
+        audioContextRef.current = audioCtx;
+        const destination = audioCtx.createMediaStreamDestination();
+        let hasMixedAudio = false;
+
+        // (a) User's local microphone audio
+        if (localStreamRef.current && localStreamRef.current.getAudioTracks().length > 0) {
+          try {
+            const micTrack = localStreamRef.current.getAudioTracks()[0];
+            const micStream = new MediaStream([micTrack]);
+            const micSource = audioCtx.createMediaStreamSource(micStream);
+            micSource.connect(destination);
+            hasMixedAudio = true;
+          } catch (micErr) {
+            console.warn('[Recording] Could not mix local mic:', micErr);
+          }
+        }
+
+        // (b) Remote participants' audio streams
+        if (remoteStreamsRef.current) {
+          Object.values(remoteStreamsRef.current).forEach((rStream) => {
+            if (rStream && rStream.getAudioTracks().length > 0) {
+              try {
+                const peerTrack = rStream.getAudioTracks()[0];
+                const peerStream = new MediaStream([peerTrack]);
+                const peerSource = audioCtx.createMediaStreamSource(peerStream);
+                peerSource.connect(destination);
+                hasMixedAudio = true;
+              } catch (peerErr) {
+                console.warn('[Recording] Could not mix peer audio:', peerErr);
+              }
+            }
+          });
+        }
+
+        // (c) Display/Tab audio if shared
+        if (displayStream && displayStream.getAudioTracks().length > 0) {
+          try {
+            const dispTrack = displayStream.getAudioTracks()[0];
+            const dispStream = new MediaStream([dispTrack]);
+            const dispSource = audioCtx.createMediaStreamSource(dispStream);
+            dispSource.connect(destination);
+            hasMixedAudio = true;
+          } catch (dispErr) {
+            console.warn('[Recording] Could not mix display audio:', dispErr);
+          }
+        }
+
+        if (hasMixedAudio && destination.stream.getAudioTracks().length > 0) {
+          mixedAudioTrack = destination.stream.getAudioTracks()[0];
+        }
+      } catch (audioCtxErr) {
+        console.warn('[Recording] Web Audio Context not supported, falling back to direct stream:', audioCtxErr);
+      }
+
+      // 3. Assemble combined recording stream
+      const tracksToRecord = [];
+      if (videoTrack) tracksToRecord.push(videoTrack);
+      if (mixedAudioTrack) {
+        tracksToRecord.push(mixedAudioTrack);
+      } else if (localStreamRef.current && localStreamRef.current.getAudioTracks().length > 0) {
+        tracksToRecord.push(localStreamRef.current.getAudioTracks()[0]);
+      } else if (displayStream && displayStream.getAudioTracks().length > 0) {
+        tracksToRecord.push(displayStream.getAudioTracks()[0]);
+      }
+
+      const streamToRecord = new MediaStream(tracksToRecord);
 
       let mimeType = 'video/webm;codecs=vp9,opus';
       if (!MediaRecorder.isTypeSupported(mimeType)) {
@@ -654,6 +738,10 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
       };
 
       recorder.onstop = () => {
+        if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+          try { audioContextRef.current.close(); } catch (e) {}
+        }
+
         if (recordedChunksRef.current.length > 0) {
           const fileType = recorder.mimeType || 'video/webm';
           const ext = fileType.includes('mp4') ? 'mp4' : 'webm';
@@ -668,17 +756,19 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
           setTimeout(() => {
             document.body.removeChild(a);
             window.URL.revokeObjectURL(url);
-          }, 300);
+          }, 400);
         }
         setIsRecording(false);
       };
 
       // Automatically finalize recording if user stops sharing from browser banner
-      streamToRecord.getVideoTracks()[0]?.addEventListener('ended', () => {
-        if (recorder.state !== 'inactive') {
-          recorder.stop();
-        }
-      });
+      if (displayStream && displayStream.getVideoTracks().length > 0) {
+        displayStream.getVideoTracks()[0].addEventListener('ended', () => {
+          if (recorder.state !== 'inactive') {
+            recorder.stop();
+          }
+        });
+      }
 
       recorder.start(1000);
       mediaRecorderRef.current = recorder;
@@ -693,6 +783,9 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   const stopRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      try { audioContextRef.current.close(); } catch (e) {}
     }
     setIsRecording(false);
   };
@@ -712,6 +805,9 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
       try {
         mediaRecorderRef.current.stop();
       } catch (recErr) {}
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      try { audioContextRef.current.close(); } catch (e) {}
     }
 
     if (recognitionRef.current) {

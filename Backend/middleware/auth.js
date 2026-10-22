@@ -44,11 +44,11 @@ export const generateTokens = (userId) => {
   const refreshSecret = process.env.JWT_REFRESH_SECRET || 'intellmeet_super_refresh_jwt_key_2026';
 
   const accessToken = jwt.sign({ id: userId }, secret, {
-    expiresIn: process.env.JWT_EXPIRE || '7d'
+    expiresIn: process.env.JWT_EXPIRE || '200d'
   });
 
   const refreshToken = jwt.sign({ id: userId }, refreshSecret, {
-    expiresIn: '30d'
+    expiresIn: process.env.JWT_REFRESH_EXPIRE || '200d'
   });
 
   return { accessToken, refreshToken };

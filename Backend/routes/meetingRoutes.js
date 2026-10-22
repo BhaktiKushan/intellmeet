@@ -94,13 +94,29 @@ router.get('/:codeOrId', protect, async (req, res, next) => {
     const isObjectId = /^[0-9a-fA-F]{24}$/.test(codeOrId);
     const query = isObjectId ? { _id: codeOrId } : { code: codeOrId };
 
-    const meeting = await Meeting.findOne(query)
+    let meeting = await Meeting.findOne(query)
       .populate('host', 'name email avatar title department')
       .populate('participants.user', 'name email avatar title')
       .populate('actionItems.assigneeId', 'name email avatar');
 
     if (!meeting) {
-      return res.status(404).json({ success: false, message: 'Meeting not found' });
+      meeting = await Meeting.create({
+        title: `Meeting (${codeOrId})`,
+        code: isObjectId ? `meet-${codeOrId.slice(0, 8)}` : codeOrId,
+        host: req.user._id,
+        status: 'active',
+        participants: [
+          {
+            user: req.user._id,
+            name: req.user.name,
+            email: req.user.email,
+            avatar: req.user.avatar,
+            role: 'host',
+            joinedAt: new Date()
+          }
+        ]
+      });
+      meeting = await Meeting.findById(meeting._id).populate('host', 'name email avatar title department');
     }
 
     res.json({
@@ -192,7 +208,12 @@ router.post('/:id/ai-intelligence', protect, async (req, res, next) => {
     let meeting = await Meeting.findOne(query);
 
     if (!meeting) {
-      return res.status(404).json({ success: false, message: 'Meeting not found' });
+      meeting = await Meeting.create({
+        title: `Meeting (${req.params.id})`,
+        code: req.params.id,
+        host: req.user._id,
+        status: 'ended'
+      });
     }
 
     const { transcript } = req.body;
