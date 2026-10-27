@@ -28,6 +28,7 @@ export const ParticipantTile = ({
   aspectRatio = '16/9'
 }) => {
   const videoRef = useRef(null);
+  const audioRef = useRef(null);
   const [showMenu, setShowMenu] = useState(false);
   const [isAudioElementMuted, setIsAudioElementMuted] = useState(false);
 
@@ -35,7 +36,13 @@ export const ParticipantTile = ({
     if (videoRef.current && stream) {
       videoRef.current.srcObject = stream;
     }
-  }, [stream]);
+    if (audioRef.current && stream && !isLocal) {
+      audioRef.current.srcObject = stream;
+      audioRef.current.play().catch((err) => {
+        console.warn('[Remote Audio] Autoplay note:', err);
+      });
+    }
+  }, [stream, isLocal]);
 
   const hasVideoStream = stream && stream.getVideoTracks().length > 0 && !peer.isVideoOff;
   const isSpeaking = peer.isSpeaking && !peer.isAudioMuted;
@@ -43,9 +50,13 @@ export const ParticipantTile = ({
   // Toggle local speaker audio for this specific remote peer
   const toggleMutePeerAudio = (e) => {
     e.stopPropagation();
+    const nextMuted = !isAudioElementMuted;
+    setIsAudioElementMuted(nextMuted);
+    if (audioRef.current) {
+      audioRef.current.muted = nextMuted;
+    }
     if (videoRef.current) {
-      videoRef.current.muted = !videoRef.current.muted;
-      setIsAudioElementMuted(videoRef.current.muted);
+      videoRef.current.muted = isLocal || nextMuted;
     }
   };
 
@@ -77,18 +88,31 @@ export const ParticipantTile = ({
         userSelect: 'none'
       }}
     >
+      {/* Dedicated Remote Audio Playback Element */}
+      {!isLocal && (
+        <audio
+          ref={audioRef}
+          autoPlay
+          playsInline
+          muted={isAudioElementMuted}
+        />
+      )}
+
       {/* Video Element */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
-        muted={isLocal} // Local is muted to prevent self-echo; remote is unmuted
+        muted={isLocal || isAudioElementMuted}
         style={{
           width: '100%',
           height: '100%',
           objectFit: isScreenShare ? 'contain' : 'cover',
           transform: isLocal && !isScreenShare ? 'scaleX(-1)' : 'none',
-          display: hasVideoStream ? 'block' : 'none',
+          position: 'absolute',
+          inset: 0,
+          opacity: hasVideoStream ? 1 : 0,
+          pointerEvents: hasVideoStream ? 'auto' : 'none',
           background: '#050811'
         }}
       />

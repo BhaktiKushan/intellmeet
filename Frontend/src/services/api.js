@@ -89,10 +89,11 @@ export const api = {
     return handleResponse(res);
   },
 
-  endMeeting: async (id) => {
+  endMeeting: async (id, data = {}) => {
     const res = await fetch(`${API_BASE}/meetings/${id}/end`, {
       method: 'POST',
-      headers: getHeaders()
+      headers: getHeaders(),
+      body: JSON.stringify(data)
     });
     return handleResponse(res);
   },

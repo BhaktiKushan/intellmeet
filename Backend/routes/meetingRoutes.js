@@ -119,6 +119,27 @@ router.get('/:codeOrId', protect, async (req, res, next) => {
       meeting = await Meeting.findById(meeting._id).populate('host', 'name email avatar title department');
     }
 
+    // If meeting is missing summary, auto-generate and persist it so View AI Summary never opens empty
+    if (!meeting.summary || !meeting.keyTakeaways || meeting.keyTakeaways.length === 0) {
+      let transcriptToUse = (meeting.transcript && meeting.transcript.length > 0) ? meeting.transcript : [];
+      if (transcriptToUse.length === 0 && meeting.chatMessages && meeting.chatMessages.length > 0) {
+        transcriptToUse = meeting.chatMessages.map(c => ({
+          speaker: c.sender || 'Participant',
+          text: c.text,
+          timestamp: new Date(c.timestamp).toLocaleTimeString()
+        }));
+      }
+      try {
+        const aiResults = await generateMeetingSummary(transcriptToUse, meeting.title);
+        meeting.summary = aiResults.summary;
+        meeting.keyTakeaways = aiResults.keyTakeaways;
+        meeting.actionItems = aiResults.actionItems;
+        await meeting.save();
+      } catch (summaryErr) {
+        console.warn('[Meeting Details] Auto summary generation notice:', summaryErr.message);
+      }
+    }
+
     res.json({
       success: true,
       data: meeting
@@ -165,6 +186,14 @@ router.post('/:id/end', protect, async (req, res, next) => {
         host: req.user._id,
         status: 'ended'
       });
+    }
+
+    const { transcript, chatMessages } = req.body || {};
+    if (transcript && Array.isArray(transcript) && transcript.length > 0) {
+      meeting.transcript = transcript;
+    }
+    if (chatMessages && Array.isArray(chatMessages) && chatMessages.length > 0) {
+      meeting.chatMessages = chatMessages;
     }
 
     meeting.status = 'ended';

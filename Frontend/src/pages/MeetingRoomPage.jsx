@@ -74,6 +74,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   const [sharedNotes, setSharedNotes] = useState('## Meeting Collaboration & Action Items\n- Enterprise low-latency WebRTC verified\n- Multi-track recording with mixed audio ready\n');
   const [showLiveTranscript, setShowLiveTranscript] = useState(true);
   const [latestTranscript, setLatestTranscript] = useState(null);
+  const [transcriptLog, setTranscriptLog] = useState([]);
   const [copiedCode, setCopiedCode] = useState(false);
 
   // Recording State
@@ -340,23 +341,37 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
 
     // Remote track arrived
     pc.ontrack = (event) => {
-      if (event.streams && event.streams[0]) {
-        const stream = event.streams[0];
-        setRemoteStreams(prev => ({
-          ...prev,
-          [targetSocketId]: stream
-        }));
+      console.log(`[WebRTC] Received remote track (${event.track?.kind}) from ${targetSocketId}`);
+      let stream = event.streams && event.streams[0];
+      if (!stream) {
+        stream = new MediaStream([event.track]);
+      }
 
-        // If recording is active, dynamically connect new peer audio to mixer destination!
-        if (recordingAudioCtxRef.current && recordingDestinationRef.current) {
-          if (stream.getAudioTracks().length > 0) {
-            try {
-              const peerSource = recordingAudioCtxRef.current.createMediaStreamSource(stream);
-              peerSource.connect(recordingDestinationRef.current);
-            } catch (err) {
-              console.warn('[Recording Mixer] Peer audio connect note:', err);
-            }
+      setRemoteStreams(prev => {
+        const existing = prev[targetSocketId];
+        if (existing) {
+          if (!existing.getTracks().some(t => t.id === event.track.id)) {
+            existing.addTrack(event.track);
           }
+          return { ...prev, [targetSocketId]: existing };
+        }
+        return { ...prev, [targetSocketId]: stream };
+      });
+
+      // If recording is active, dynamically connect new peer audio to mixer destination!
+      if (recordingAudioCtxRef.current && recordingDestinationRef.current && event.track?.kind === 'audio') {
+        try {
+          if (recordingAudioCtxRef.current.state === 'suspended') {
+            recordingAudioCtxRef.current.resume();
+          }
+          const peerStream = new MediaStream([event.track]);
+          const peerSource = recordingAudioCtxRef.current.createMediaStreamSource(peerStream);
+          const peerGain = recordingAudioCtxRef.current.createGain();
+          peerGain.gain.value = 1.0;
+          peerSource.connect(peerGain);
+          peerGain.connect(recordingDestinationRef.current);
+        } catch (err) {
+          console.warn('[Recording Mixer] Peer audio connect note:', err);
         }
       }
     };
@@ -373,26 +388,34 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
 
     // Handle connection state changes for reconnect recovery
     pc.onconnectionstatechange = () => {
+      console.log(`[WebRTC] Connection with ${targetSocketId} state:`, pc.connectionState);
       if (pc.connectionState === 'failed') {
         pc.restartIce?.();
       }
     };
 
-    // Offer negotiation
+    const initiateOffer = async () => {
+      try {
+        const offer = await pc.createOffer({
+          offerToReceiveAudio: true,
+          offerToReceiveVideo: true
+        });
+        await pc.setLocalDescription(offer);
+        socket.emit('offer', {
+          targetSocketId,
+          callerSocketId: socket.id,
+          sdp: offer
+        });
+      } catch (err) {
+        console.error('[WebRTC] Offer error:', err);
+      }
+    };
+
+    pc.onnegotiationneeded = initiateOffer;
+
+    // Trigger offer immediately if initiator!
     if (isInitiator) {
-      pc.onnegotiationneeded = async () => {
-        try {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          socket.emit('offer', {
-            targetSocketId,
-            callerSocketId: socket.id,
-            sdp: offer
-          });
-        } catch (err) {
-          console.error('[WebRTC] Offer error:', err);
-        }
-      };
+      initiateOffer();
     }
 
     return pc;
@@ -447,6 +470,8 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
         if (prev.some(p => p.socketId === newUser.socketId)) return prev;
         return [...prev, newUser];
       });
+      // Prepare receiver peer connection with local tracks already attached
+      createPeerConnection(newUser.socketId, false, socket);
     });
 
     // WebRTC Offer
@@ -623,6 +648,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
     // Live AI Speech-to-Text transcript
     socket.on('transcript-update', (item) => {
       setLatestTranscript(item);
+      setTranscriptLog(prev => [...prev, item]);
     });
 
     // Start Web Speech API transcription
@@ -650,6 +676,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
               timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
             };
             setLatestTranscript(transcriptItem);
+            setTranscriptLog(prev => [...prev, transcriptItem]);
             socket.emit('live-transcript', { roomId, item: transcriptItem });
           }
         };
@@ -928,55 +955,100 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
       // 2. Web Audio Multi-Track Mixer
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       const audioCtx = new AudioContextClass();
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
       recordingAudioCtxRef.current = audioCtx;
       const destination = audioCtx.createMediaStreamDestination();
       recordingDestinationRef.current = destination;
 
+      // Keep active audio pipeline flowing to prevent silent idle sleeping
+      try {
+        const osc = audioCtx.createOscillator();
+        const silentGain = audioCtx.createGain();
+        silentGain.gain.value = 0.00001;
+        osc.connect(silentGain);
+        silentGain.connect(destination);
+        osc.start();
+      } catch (e) {}
+
       // Mix local microphone
-      if (localStreamRef.current && localStreamRef.current.getAudioTracks().length > 0) {
-        try {
-          const micSource = audioCtx.createMediaStreamSource(new MediaStream([localStreamRef.current.getAudioTracks()[0]]));
-          micSource.connect(destination);
-        } catch (e) {}
+      if (localStreamRef.current) {
+        const localAudioTracks = localStreamRef.current.getAudioTracks();
+        if (localAudioTracks.length > 0 && localAudioTracks[0].readyState === 'live') {
+          try {
+            const micStream = new MediaStream([localAudioTracks[0]]);
+            const micSource = audioCtx.createMediaStreamSource(micStream);
+            const micGain = audioCtx.createGain();
+            micGain.gain.value = 1.0;
+            micSource.connect(micGain);
+            micGain.connect(destination);
+          } catch (e) {
+            console.warn('[Recording Mixer] Mic connect note:', e);
+          }
+        }
       }
 
       // Mix all remote participant audio streams
-      Object.values(remoteStreamsRef.current).forEach(rStream => {
-        if (rStream && rStream.getAudioTracks().length > 0) {
-          try {
-            const peerSource = audioCtx.createMediaStreamSource(rStream);
-            peerSource.connect(destination);
-          } catch (e) {}
+      Object.entries(remoteStreamsRef.current).forEach(([peerId, rStream]) => {
+        if (rStream) {
+          const remoteAudioTracks = rStream.getAudioTracks();
+          if (remoteAudioTracks.length > 0 && remoteAudioTracks[0].readyState === 'live') {
+            try {
+              const peerStream = new MediaStream([remoteAudioTracks[0]]);
+              const peerSource = audioCtx.createMediaStreamSource(peerStream);
+              const peerGain = audioCtx.createGain();
+              peerGain.gain.value = 1.0;
+              peerSource.connect(peerGain);
+              peerGain.connect(destination);
+            } catch (e) {
+              console.warn(`[Recording Mixer] Peer ${peerId} audio note:`, e);
+            }
+          }
         }
       });
 
       // Mix system/display audio if captured via Mode B
-      if (displayStream && displayStream.getAudioTracks().length > 0) {
-        try {
-          const dispSource = audioCtx.createMediaStreamSource(displayStream);
-          dispSource.connect(destination);
-        } catch (e) {}
+      if (displayStream) {
+        const dispAudioTracks = displayStream.getAudioTracks();
+        if (dispAudioTracks.length > 0 && dispAudioTracks[0].readyState === 'live') {
+          try {
+            const dispStream = new MediaStream([dispAudioTracks[0]]);
+            const dispSource = audioCtx.createMediaStreamSource(dispStream);
+            const dispGain = audioCtx.createGain();
+            dispGain.gain.value = 1.0;
+            dispSource.connect(dispGain);
+            dispGain.connect(destination);
+          } catch (e) {
+            console.warn('[Recording Mixer] Display audio note:', e);
+          }
+        }
       }
 
       // 3. Assemble tracks to record
       const tracks = [];
-      if (videoStreamToRecord.getVideoTracks().length > 0) {
+      if (videoStreamToRecord && videoStreamToRecord.getVideoTracks().length > 0) {
         tracks.push(videoStreamToRecord.getVideoTracks()[0]);
       }
       if (destination.stream.getAudioTracks().length > 0) {
-        tracks.push(destination.stream.getAudioTracks()[0]);
+        const recAudioTrack = destination.stream.getAudioTracks()[0];
+        recAudioTrack.enabled = true;
+        tracks.push(recAudioTrack);
       }
 
       const streamToRecord = new MediaStream(tracks);
 
       // Determine supported MIME type
-      let mimeType = 'video/webm;codecs=vp9,opus';
-      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm;codecs=vp8,opus';
+      let mimeType = 'video/webm;codecs=vp8,opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm;codecs=vp9,opus';
       if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
       if (!MediaRecorder.isTypeSupported(mimeType) && MediaRecorder.isTypeSupported('video/mp4')) mimeType = 'video/mp4';
 
-      const options = MediaRecorder.isTypeSupported(mimeType) ? { mimeType } : undefined;
-      const recorder = options ? new MediaRecorder(streamToRecord, options) : new MediaRecorder(streamToRecord);
+      const options = {
+        mimeType: MediaRecorder.isTypeSupported(mimeType) ? mimeType : undefined,
+        audioBitsPerSecond: 128000
+      };
+      const recorder = options.mimeType ? new MediaRecorder(streamToRecord, options) : new MediaRecorder(streamToRecord);
 
       recorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) {
@@ -1077,8 +1149,13 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
     const targetMeetingId = meeting?._id || roomId;
     if (targetMeetingId) {
       try {
-        await api.endMeeting(targetMeetingId);
-      } catch (err) {}
+        await api.endMeeting(targetMeetingId, {
+          transcript: transcriptLog,
+          chatMessages
+        });
+      } catch (err) {
+        console.warn('[Leave Call] End meeting sync note:', err);
+      }
     }
 
     onLeaveRoom();
