@@ -125,7 +125,10 @@ export const MeetingStage = ({
             muted={isPresenterLocal}
             ref={(el) => {
               if (el && presenterStream) {
-                el.srcObject = presenterStream;
+                if (el.srcObject !== presenterStream) {
+                  el.srcObject = presenterStream;
+                }
+                el.play().catch(() => {});
               }
             }}
             style={{

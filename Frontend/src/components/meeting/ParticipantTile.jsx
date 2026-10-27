@@ -32,19 +32,38 @@ export const ParticipantTile = ({
   const [showMenu, setShowMenu] = useState(false);
   const [isAudioElementMuted, setIsAudioElementMuted] = useState(false);
 
+  const [, setTrackRevision] = useState(0);
+
+  // Re-evaluate whenever tracks are added or removed dynamically
+  useEffect(() => {
+    if (!stream) return;
+    const handleTracks = () => setTrackRevision(r => r + 1);
+    stream.addEventListener('addtrack', handleTracks);
+    stream.addEventListener('removetrack', handleTracks);
+    return () => {
+      stream.removeEventListener('addtrack', handleTracks);
+      stream.removeEventListener('removetrack', handleTracks);
+    };
+  }, [stream]);
+
   useEffect(() => {
     if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
+      if (videoRef.current.srcObject !== stream) {
+        videoRef.current.srcObject = stream;
+      }
+      videoRef.current.play().catch(() => {});
     }
     if (audioRef.current && stream && !isLocal) {
-      audioRef.current.srcObject = stream;
+      if (audioRef.current.srcObject !== stream) {
+        audioRef.current.srcObject = stream;
+      }
       audioRef.current.play().catch((err) => {
         console.warn('[Remote Audio] Autoplay note:', err);
       });
     }
   }, [stream, isLocal]);
 
-  const hasVideoStream = stream && stream.getVideoTracks().length > 0 && !peer.isVideoOff;
+  const hasVideoStream = Boolean(stream && stream.getVideoTracks().length > 0 && !peer.isVideoOff);
   const isSpeaking = peer.isSpeaking && !peer.isAudioMuted;
 
   // Toggle local speaker audio for this specific remote peer
@@ -54,9 +73,6 @@ export const ParticipantTile = ({
     setIsAudioElementMuted(nextMuted);
     if (audioRef.current) {
       audioRef.current.muted = nextMuted;
-    }
-    if (videoRef.current) {
-      videoRef.current.muted = isLocal || nextMuted;
     }
   };
 
@@ -98,12 +114,12 @@ export const ParticipantTile = ({
         />
       )}
 
-      {/* Video Element */}
+      {/* Video Element (Video display only; audio handled by dedicated audio element) */}
       <video
         ref={videoRef}
         autoPlay
         playsInline
-        muted={isLocal || isAudioElementMuted}
+        muted={true}
         style={{
           width: '100%',
           height: '100%',

@@ -90,6 +90,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   const originalCameraTrackRef = useRef(null);
   const remoteStreamsRef = useRef({});
   const peersRef = useRef({}); // { [socketId]: RTCPeerConnection }
+  const peerStatesRef = useRef({}); // { [socketId]: { isMakingOffer: boolean, isPolite: boolean } }
   const iceQueueRef = useRef({}); // { [socketId]: [candidate] }
   const socketRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -108,14 +109,53 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   const speechAnalyserAudioCtxRef = useRef(null);
   const speechAnimFrameRef = useRef(null);
 
-  // Keep stream refs updated
+  // Keep stream refs updated and sync tracks to peer connections
   useEffect(() => {
     localStreamRef.current = localStream;
+    if (localStream) {
+      Object.values(peersRef.current).forEach(pc => {
+        if (pc.signalingState === 'closed') return;
+        const senders = pc.getSenders();
+        localStream.getTracks().forEach(track => {
+          const sender = senders.find(s => s.track && s.track.kind === track.kind);
+          if (sender) {
+            sender.replaceTrack(track).catch(() => {});
+          } else {
+            try { pc.addTrack(track, localStream); } catch (e) {}
+          }
+        });
+      });
+    }
   }, [localStream]);
 
   useEffect(() => {
     remoteStreamsRef.current = remoteStreams;
   }, [remoteStreams]);
+
+  // Resume any media elements that browser autoplay may have suspended
+  useEffect(() => {
+    if (inLobby) return;
+    const unlockMedia = () => {
+      document.querySelectorAll('audio').forEach(audio => {
+        if (audio.paused && audio.srcObject) {
+          audio.play().catch(() => {});
+        }
+      });
+      document.querySelectorAll('video').forEach(video => {
+        if (video.paused && video.srcObject) {
+          video.play().catch(() => {});
+        }
+      });
+    };
+    window.addEventListener('click', unlockMedia);
+    window.addEventListener('touchstart', unlockMedia);
+    window.addEventListener('keydown', unlockMedia);
+    return () => {
+      window.removeEventListener('click', unlockMedia);
+      window.removeEventListener('touchstart', unlockMedia);
+      window.removeEventListener('keydown', unlockMedia);
+    };
+  }, [inLobby]);
 
   // Load meeting metadata
   useEffect(() => {
@@ -332,31 +372,69 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
     const pc = new RTCPeerConnection(ICE_SERVERS);
     peersRef.current[targetSocketId] = pc;
 
+    // Determine deterministic politeness for Perfect Negotiation:
+    // If local socket ID is lexicographically greater than target socket ID, this peer is polite.
+    const isPolite = socket?.id ? (socket.id > targetSocketId) : !isInitiator;
+    peerStatesRef.current[targetSocketId] = { isMakingOffer: false, isPolite };
+
     // Add local media tracks
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => {
-        pc.addTrack(track, localStreamRef.current);
+        try {
+          pc.addTrack(track, localStreamRef.current);
+        } catch (e) {
+          console.warn('[WebRTC] addTrack note:', e);
+        }
       });
+    }
+
+    // Ensure audio and video transceivers exist so reception is guaranteed even if local device lacks mic/camera
+    const senders = pc.getSenders();
+    const hasAudioSender = senders.some(s => s.track && s.track.kind === 'audio');
+    const hasVideoSender = senders.some(s => s.track && s.track.kind === 'video');
+    if (!hasAudioSender) {
+      try { pc.addTransceiver('audio', { direction: 'recvonly' }); } catch (e) {}
+    }
+    if (!hasVideoSender) {
+      try { pc.addTransceiver('video', { direction: 'recvonly' }); } catch (e) {}
     }
 
     // Remote track arrived
     pc.ontrack = (event) => {
-      console.log(`[WebRTC] Received remote track (${event.track?.kind}) from ${targetSocketId}`);
-      let stream = event.streams && event.streams[0];
-      if (!stream) {
-        stream = new MediaStream([event.track]);
-      }
+      console.log(`[WebRTC] Received remote track (${event.track?.kind}) from ${targetSocketId}, id: ${event.track?.id}`);
 
-      setRemoteStreams(prev => {
-        const existing = prev[targetSocketId];
-        if (existing) {
-          if (!existing.getTracks().some(t => t.id === event.track.id)) {
-            existing.addTrack(event.track);
+      const updateRemoteStream = () => {
+        setRemoteStreams(prev => {
+          const existing = prev[targetSocketId];
+          let updatedStream;
+          if (existing) {
+            if (!existing.getTracks().some(t => t.id === event.track.id)) {
+              existing.addTrack(event.track);
+            }
+            updatedStream = new MediaStream(existing.getTracks());
+          } else {
+            const incomingStream = event.streams && event.streams[0];
+            if (incomingStream) {
+              updatedStream = new MediaStream(incomingStream.getTracks());
+            } else {
+              updatedStream = new MediaStream([event.track]);
+            }
           }
-          return { ...prev, [targetSocketId]: existing };
-        }
-        return { ...prev, [targetSocketId]: stream };
-      });
+          return { ...prev, [targetSocketId]: updatedStream };
+        });
+      };
+
+      updateRemoteStream();
+
+      event.track.onunmute = () => {
+        console.log(`[WebRTC] Track unmuted (${event.track?.kind}) from ${targetSocketId}`);
+        updateRemoteStream();
+      };
+
+      event.track.onended = () => {
+        console.log(`[WebRTC] Track ended (${event.track?.kind}) from ${targetSocketId}`);
+        updateRemoteStream();
+      };
 
       // If recording is active, dynamically connect new peer audio to mixer destination!
       if (recordingAudioCtxRef.current && recordingDestinationRef.current && event.track?.kind === 'audio') {
@@ -378,7 +456,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
 
     // Forward ICE candidate
     pc.onicecandidate = (event) => {
-      if (event.candidate) {
+      if (event.candidate && socket) {
         socket.emit('ice-candidate', {
           targetSocketId,
           candidate: event.candidate
@@ -390,32 +468,49 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
     pc.onconnectionstatechange = () => {
       console.log(`[WebRTC] Connection with ${targetSocketId} state:`, pc.connectionState);
       if (pc.connectionState === 'failed') {
-        pc.restartIce?.();
+        try { pc.restartIce(); } catch (e) {}
       }
     };
 
-    const initiateOffer = async () => {
+    const makeOffer = async () => {
+      const state = peerStatesRef.current[targetSocketId];
+      if (!state || state.isMakingOffer) return;
+      if (pc.signalingState !== 'stable') return;
+
       try {
+        state.isMakingOffer = true;
         const offer = await pc.createOffer({
           offerToReceiveAudio: true,
           offerToReceiveVideo: true
         });
+        if (pc.signalingState !== 'stable') return;
         await pc.setLocalDescription(offer);
-        socket.emit('offer', {
-          targetSocketId,
-          callerSocketId: socket.id,
-          sdp: offer
-        });
+        if (socket) {
+          socket.emit('offer', {
+            targetSocketId,
+            callerSocketId: socket.id,
+            sdp: pc.localDescription
+          });
+        }
       } catch (err) {
         console.error('[WebRTC] Offer error:', err);
+      } finally {
+        if (peerStatesRef.current[targetSocketId]) {
+          peerStatesRef.current[targetSocketId].isMakingOffer = false;
+        }
       }
     };
 
-    pc.onnegotiationneeded = initiateOffer;
+    pc.onnegotiationneeded = () => {
+      // Only the designated initiator initiates negotiation to prevent race condition offers
+      if (isInitiator) {
+        makeOffer();
+      }
+    };
 
-    // Trigger offer immediately if initiator!
+    // Trigger offer immediately if designated initiator!
     if (isInitiator) {
-      initiateOffer();
+      makeOffer();
     }
 
     return pc;
@@ -442,7 +537,9 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
         _id: user?._id,
         name: confirmedName || user?.name || 'Guest Participant',
         avatar: user?.avatar,
-        role: userRole
+        role: userRole,
+        isAudioMuted,
+        isVideoOff
       }
     });
 
@@ -474,13 +571,27 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
       createPeerConnection(newUser.socketId, false, socket);
     });
 
-    // WebRTC Offer
+    // WebRTC Offer with Perfect Negotiation
     socket.on('offer', async ({ callerSocketId, sdp }) => {
+      console.log(`[WebRTC] Received offer from ${callerSocketId}`);
       const pc = createPeerConnection(callerSocketId, false, socket);
+      const peerState = peerStatesRef.current[callerSocketId] || { isMakingOffer: false, isPolite: true };
+
       try {
+        const isOfferCollision = peerState.isMakingOffer || pc.signalingState !== 'stable';
+        if (isOfferCollision) {
+          if (!peerState.isPolite) {
+            console.log(`[WebRTC] Glare collision detected: impolite peer ignoring offer from ${callerSocketId}`);
+            return;
+          }
+          console.log(`[WebRTC] Glare collision detected: polite peer rolling back local offer for ${callerSocketId}`);
+          await pc.setLocalDescription({ type: 'rollback' });
+        }
+
         await pc.setRemoteDescription(new RTCSessionDescription(sdp));
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
+
         socket.emit('answer', {
           targetSocketId: callerSocketId,
           callerSocketId: socket.id,
@@ -489,10 +600,15 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
 
         // Drain ICE queue
         if (iceQueueRef.current[callerSocketId]) {
-          for (const cand of iceQueueRef.current[callerSocketId]) {
-            await pc.addIceCandidate(new RTCIceCandidate(cand));
-          }
+          const queued = iceQueueRef.current[callerSocketId];
           delete iceQueueRef.current[callerSocketId];
+          for (const cand of queued) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(cand));
+            } catch (iceErr) {
+              console.warn('[WebRTC] ICE candidate drain error:', iceErr);
+            }
+          }
         }
       } catch (err) {
         console.error('[WebRTC] Offer handling error:', err);
@@ -501,15 +617,25 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
 
     // WebRTC Answer
     socket.on('answer', async ({ callerSocketId, sdp }) => {
+      console.log(`[WebRTC] Received answer from ${callerSocketId}`);
       const pc = peersRef.current[callerSocketId];
       if (pc) {
         try {
-          await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-          if (iceQueueRef.current[callerSocketId]) {
-            for (const cand of iceQueueRef.current[callerSocketId]) {
-              await pc.addIceCandidate(new RTCIceCandidate(cand));
+          if (pc.signalingState === 'have-local-offer') {
+            await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+            if (iceQueueRef.current[callerSocketId]) {
+              const queued = iceQueueRef.current[callerSocketId];
+              delete iceQueueRef.current[callerSocketId];
+              for (const cand of queued) {
+                try {
+                  await pc.addIceCandidate(new RTCIceCandidate(cand));
+                } catch (iceErr) {
+                  console.warn('[WebRTC] ICE candidate drain error:', iceErr);
+                }
+              }
             }
-            delete iceQueueRef.current[callerSocketId];
+          } else {
+            console.warn(`[WebRTC] Ignoring answer from ${callerSocketId} in state: ${pc.signalingState}`);
           }
         } catch (err) {
           console.error('[WebRTC] Answer handling error:', err);
@@ -519,6 +645,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
 
     // WebRTC ICE Candidate
     socket.on('ice-candidate', async ({ callerSocketId, candidate }) => {
+      if (!candidate) return;
       const pc = peersRef.current[callerSocketId];
       if (pc && pc.remoteDescription && pc.remoteDescription.type) {
         try {
@@ -540,6 +667,12 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
       if (peersRef.current[socketId]) {
         peersRef.current[socketId].close();
         delete peersRef.current[socketId];
+      }
+      if (peerStatesRef.current[socketId]) {
+        delete peerStatesRef.current[socketId];
+      }
+      if (iceQueueRef.current[socketId]) {
+        delete iceQueueRef.current[socketId];
       }
       setRemoteStreams(prev => {
         const next = { ...prev };

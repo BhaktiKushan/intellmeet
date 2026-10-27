@@ -57,8 +57,8 @@ export const setupSocketIO = (io) => {
         name: user?.name || `Guest-${socket.id.slice(0, 4)}`,
         avatar: user?.avatar || '',
         role: isHost ? 'host' : (user?.role || 'participant'),
-        isAudioMuted: room.settings.muteOnJoin && !isHost,
-        isVideoOff: false,
+        isAudioMuted: user?.isAudioMuted !== undefined ? user.isAudioMuted : (room.settings.muteOnJoin && !isHost),
+        isVideoOff: user?.isVideoOff !== undefined ? user.isVideoOff : false,
         isHandRaised: false,
         isSpeaking: false,
         joinedAt: new Date().toISOString()
