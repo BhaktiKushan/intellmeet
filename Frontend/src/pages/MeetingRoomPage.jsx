@@ -1,25 +1,24 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext.jsx';
 import { api } from '../services/api.js';
+
+// Subcomponents
+import { MeetingLobby } from '../components/meeting/MeetingLobby.jsx';
+import { MeetingStage } from '../components/meeting/MeetingStage.jsx';
+import { MeetingControls } from '../components/meeting/MeetingControls.jsx';
+import { MeetingSideDrawer } from '../components/meeting/MeetingSideDrawer.jsx';
+import { RecordingModal } from '../components/meeting/RecordingModal.jsx';
+
 import {
-  Mic,
-  MicOff,
-  Video,
-  VideoOff,
-  Monitor,
-  PhoneOff,
-  MessageSquare,
-  Users,
   Sparkles,
-  Hand,
+  Zap,
   Circle,
   Copy,
   Check,
-  Edit3,
-  Send,
   Radio,
-  Zap
+  Shield,
+  Volume2
 } from 'lucide-react';
 
 const ICE_SERVERS = {
@@ -32,123 +31,83 @@ const ICE_SERVERS = {
   ]
 };
 
-// Component to render each connected remote peer's video & audio stream
-const RemoteVideoTile = ({ peer, stream }) => {
-  const videoRef = useRef(null);
-
-  useEffect(() => {
-    if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
-    }
-  }, [stream]);
-
-  const hasVideoStream = stream && stream.getVideoTracks().length > 0 && !peer.isVideoOff;
-
-  return (
-    <div style={{
-      position: 'relative',
-      borderRadius: '16px',
-      overflow: 'hidden',
-      background: '#0d1322',
-      border: peer.isHandRaised ? '2px solid #f59e0b' : '1px solid var(--border-subtle)',
-      aspectRatio: '16/9',
-      maxHeight: '75vh',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      boxShadow: 'var(--shadow-md)'
-    }}>
-      {/* Remote Video Element (Unmuted so remote participant's voice is heard!) */}
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        style={{
-          width: '100%',
-          height: '100%',
-          objectFit: 'cover',
-          display: hasVideoStream ? 'block' : 'none'
-        }}
-      />
-
-      {/* Avatar when remote camera is toggled off */}
-      {!hasVideoStream && (
-        <div style={{ textAlign: 'center' }}>
-          <img
-            src={peer.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${peer.name}`}
-            alt={peer.name}
-            style={{ width: '84px', height: '84px', borderRadius: '50%', marginBottom: '10px', objectFit: 'cover' }}
-          />
-          <div style={{ color: '#fff', fontWeight: 600 }}>{peer.name}</div>
-          <div style={{ fontSize: '0.75rem', color: '#a5b4fc', textTransform: 'capitalize' }}>
-            {peer.role || 'Participant'}
-          </div>
-        </div>
-      )}
-
-      {/* Peer Info Overlay */}
-      <div style={{
-        position: 'absolute',
-        bottom: '12px',
-        left: '12px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
-        background: 'rgba(0, 0, 0, 0.65)',
-        backdropFilter: 'blur(8px)',
-        padding: '4px 10px',
-        borderRadius: '20px',
-        fontSize: '0.8rem',
-        color: '#fff'
-      }}>
-        <span>{peer.name}</span>
-        {peer.isAudioMuted && <MicOff size={13} color="#f87171" />}
-        {peer.isHandRaised && <Hand size={13} color="#f59e0b" />}
-      </div>
-    </div>
-  );
-};
-
 export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   const { user } = useAuth();
 
-  // State
+  // Navigation & Lifecycle State
   const [inLobby, setInLobby] = useState(true);
   const [meeting, setMeeting] = useState(null);
+  const [userRole, setUserRole] = useState('participant'); // 'host' | 'participant'
+  const [hostSocketId, setHostSocketId] = useState(null);
+
+  // Media Streams State
   const [localStream, setLocalStream] = useState(null);
+  const [screenShareStream, setScreenShareStream] = useState(null);
   const [remoteStreams, setRemoteStreams] = useState({}); // { [socketId]: MediaStream }
+  const [remoteParticipants, setRemoteParticipants] = useState([]); // Array of participant objects
+
+  // Media Toggles
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isHandRaised, setIsHandRaised] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [activeSpeakerId, setActiveSpeakerId] = useState(null);
+
+  // Presenter / Layout State
+  const [presenter, setPresenter] = useState(null); // { socketId, name } or null
+  const [layoutMode, setLayoutMode] = useState('auto'); // 'auto' | 'grid' | 'stage'
+  const [allowScreenShare, setAllowScreenShare] = useState(true);
+
+  // Hardware Devices State
+  const [audioDevices, setAudioDevices] = useState([]);
+  const [videoDevices, setVideoDevices] = useState([]);
+  const [audioOutputDevices, setAudioOutputDevices] = useState([]);
+  const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState('');
+  const [selectedVideoDeviceId, setSelectedVideoDeviceId] = useState('');
+  const [selectedAudioOutputDeviceId, setSelectedAudioOutputDeviceId] = useState('');
+  const [permissionError, setPermissionError] = useState(null);
+
+  // In-Meeting Collaboration & Drawers
+  const [activeTab, setActiveTab] = useState(null); // 'chat' | 'participants' | 'notes' | 'info' | null
+  const [chatMessages, setChatMessages] = useState([]);
+  const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const [sharedNotes, setSharedNotes] = useState('## Meeting Collaboration & Action Items\n- Enterprise low-latency WebRTC verified\n- Multi-track recording with mixed audio ready\n');
   const [showLiveTranscript, setShowLiveTranscript] = useState(true);
   const [latestTranscript, setLatestTranscript] = useState(null);
-  const [activeTab, setActiveTab] = useState(null); // 'chat' | 'participants' | 'notes' | null
-  const [chatMessages, setChatMessages] = useState([]);
-  const [chatInput, setChatInput] = useState('');
-  const [participants, setParticipants] = useState([]);
   const [copiedCode, setCopiedCode] = useState(false);
-  const [sharedNotes, setSharedNotes] = useState('## Collaborative Meeting Notes\n- Reviewing sub-200ms WebRTC latency\n- Validating AI speech-to-text pipeline\n');
-  const [speechRecognitionActive, setSpeechRecognitionActive] = useState(false);
 
-  // Refs
-  const localVideoRef = useRef(null);
-  const lobbyVideoRef = useRef(null);
+  // Recording State
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [recordingModalOpen, setRecordingModalOpen] = useState(false);
+  const [recordingModalMode, setRecordingModalMode] = useState('select'); // 'select' | 'preview'
+  const [completedRecording, setCompletedRecording] = useState(null);
+
+  // Refs for WebRTC & Audio Processing
   const localStreamRef = useRef(null);
+  const screenShareTrackRef = useRef(null);
+  const originalCameraTrackRef = useRef(null);
+  const remoteStreamsRef = useRef({});
   const peersRef = useRef({}); // { [socketId]: RTCPeerConnection }
   const iceQueueRef = useRef({}); // { [socketId]: [candidate] }
-  const screenShareTrackRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
-  const recordedChunksRef = useRef([]);
   const socketRef = useRef(null);
   const recognitionRef = useRef(null);
-  const timerRef = useRef(null);
-  const audioContextRef = useRef(null);
-  const remoteStreamsRef = useRef({});
+  const recordingTimerRef = useRef(null);
 
-  // Keep localStreamRef and remoteStreamsRef in sync
+  // Web Audio Mixer Refs
+  const recordingAudioCtxRef = useRef(null);
+  const recordingDestinationRef = useRef(null);
+  const recordingMediaRecorderRef = useRef(null);
+  const recordedChunksRef = useRef([]);
+  const recordingStartTimeRef = useRef(null);
+  const recordingCanvasRef = useRef(null);
+  const recordingAnimFrameRef = useRef(null);
+
+  // Local Mic Level Analyser for Active Speaker Detection
+  const speechAnalyserAudioCtxRef = useRef(null);
+  const speechAnimFrameRef = useRef(null);
+
+  // Keep stream refs updated
   useEffect(() => {
     localStreamRef.current = localStream;
   }, [localStream]);
@@ -157,14 +116,22 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
     remoteStreamsRef.current = remoteStreams;
   }, [remoteStreams]);
 
-  // Load meeting details
+  // Load meeting metadata
   useEffect(() => {
     const fetchMeeting = async () => {
       try {
         const res = await api.getMeeting(roomId);
-        setMeeting(res.data);
+        if (res.data) {
+          setMeeting(res.data);
+          const isUserHost = res.data.host?._id === user?._id || res.data.host === user?._id;
+          if (isUserHost) {
+            setUserRole('host');
+          }
+          if (res.data.settings?.allowScreenShare !== undefined) {
+            setAllowScreenShare(res.data.settings.allowScreenShare);
+          }
+        }
       } catch (err) {
-        console.warn('Meeting not found in DB, using room code directly:', err.message);
         setMeeting({
           title: `Ad-hoc Meeting (${roomId})`,
           code: roomId,
@@ -173,55 +140,184 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
       }
     };
     fetchMeeting();
-  }, [roomId]);
+  }, [roomId, user]);
 
-  // Initialize camera for lobby preview
+  // Enumerate hardware devices
+  const updateDeviceList = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const mics = devices.filter(d => d.kind === 'audioinput');
+      const cams = devices.filter(d => d.kind === 'videoinput');
+      const outputs = devices.filter(d => d.kind === 'audiooutput');
+
+      setAudioDevices(mics);
+      setVideoDevices(cams);
+      setAudioOutputDevices(outputs);
+
+      if (mics.length > 0 && !selectedAudioDeviceId) setSelectedAudioDeviceId(mics[0].deviceId);
+      if (cams.length > 0 && !selectedVideoDeviceId) setSelectedVideoDeviceId(cams[0].deviceId);
+      if (outputs.length > 0 && !selectedAudioOutputDeviceId) setSelectedAudioOutputDeviceId(outputs[0].deviceId);
+    } catch (e) {
+      console.warn('[Devices] Enumeration warning:', e.message);
+    }
+  }, [selectedAudioDeviceId, selectedVideoDeviceId, selectedAudioOutputDeviceId]);
+
+  // Initial camera and mic capture for pre-join lobby
   useEffect(() => {
-    let streamInstance = null;
-    const startCamera = async () => {
+    let activeStream = null;
+
+    const initMedia = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true
+          video: selectedVideoDeviceId ? { deviceId: { exact: selectedVideoDeviceId } } : true,
+          audio: selectedAudioDeviceId ? { deviceId: { exact: selectedAudioDeviceId } } : true
         });
-        streamInstance = stream;
+        activeStream = stream;
         setLocalStream(stream);
         localStreamRef.current = stream;
-        if (lobbyVideoRef.current) {
-          lobbyVideoRef.current.srcObject = stream;
+        if (stream.getVideoTracks().length > 0) {
+          originalCameraTrackRef.current = stream.getVideoTracks()[0];
         }
+        setPermissionError(null);
+        await updateDeviceList();
       } catch (err) {
-        console.warn('Could not access real camera/mic (permissions or device missing). Using simulated stream:', err.message);
+        console.warn('[Media Init] Could not access user media:', err.message);
+        setPermissionError(err.message || 'Camera or microphone access denied');
       }
     };
 
-    startCamera();
+    initMedia();
 
     return () => {
-      if (streamInstance) {
-        streamInstance.getTracks().forEach(track => track.stop());
+      if (activeStream) {
+        activeStream.getTracks().forEach(t => t.stop());
       }
     };
   }, []);
 
-  // Sync stream with main video when joining room
-  useEffect(() => {
-    if (!inLobby && localVideoRef.current && localStream) {
-      localVideoRef.current.srcObject = localStream;
-    }
-  }, [inLobby, localStream]);
+  // Switch camera device
+  const handleSelectVideoDevice = async (deviceId) => {
+    setSelectedVideoDeviceId(deviceId);
+    if (!localStream) return;
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: deviceId } },
+        audio: false
+      });
+      const newVideoTrack = newStream.getVideoTracks()[0];
+      const oldVideoTrack = localStream.getVideoTracks()[0];
 
-  // Recording timer
+      if (oldVideoTrack) {
+        localStream.removeTrack(oldVideoTrack);
+        oldVideoTrack.stop();
+      }
+      localStream.addTrack(newVideoTrack);
+      originalCameraTrackRef.current = newVideoTrack;
+
+      // Update peer connections
+      Object.values(peersRef.current).forEach(pc => {
+        const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+        if (sender) sender.replaceTrack(newVideoTrack);
+      });
+
+      setLocalStream(new MediaStream(localStream.getTracks()));
+    } catch (err) {
+      console.warn('[Device Switch] Video switch error:', err.message);
+    }
+  };
+
+  // Switch mic device
+  const handleSelectAudioDevice = async (deviceId) => {
+    setSelectedAudioDeviceId(deviceId);
+    if (!localStream) return;
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: { exact: deviceId } },
+        video: false
+      });
+      const newAudioTrack = newStream.getAudioTracks()[0];
+      const oldAudioTrack = localStream.getAudioTracks()[0];
+
+      if (oldAudioTrack) {
+        localStream.removeTrack(oldAudioTrack);
+        oldAudioTrack.stop();
+      }
+      localStream.addTrack(newAudioTrack);
+
+      // Update peer connections
+      Object.values(peersRef.current).forEach(pc => {
+        const sender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
+        if (sender) sender.replaceTrack(newAudioTrack);
+      });
+
+      setLocalStream(new MediaStream(localStream.getTracks()));
+    } catch (err) {
+      console.warn('[Device Switch] Audio switch error:', err.message);
+    }
+  };
+
+  // Active speaker detection for local mic
+  useEffect(() => {
+    if (!localStream || isAudioMuted || inLobby) return;
+    const audioTrack = localStream.getAudioTracks()[0];
+    if (!audioTrack) return;
+
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      const audioCtx = new AudioContextClass();
+      speechAnalyserAudioCtxRef.current = audioCtx;
+
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 64;
+      const micStream = new MediaStream([audioTrack]);
+      const source = audioCtx.createMediaStreamSource(micStream);
+      source.connect(analyser);
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      let wasSpeaking = false;
+
+      const checkSpeech = () => {
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+        const avg = sum / dataArray.length;
+        const isSpeakingNow = avg > 18;
+
+        if (isSpeakingNow !== wasSpeaking) {
+          wasSpeaking = isSpeakingNow;
+          setActiveSpeakerId(isSpeakingNow ? 'local' : null);
+          if (socketRef.current) {
+            socketRef.current.emit('speaking-state', { roomId, isSpeaking: isSpeakingNow });
+          }
+        }
+        speechAnimFrameRef.current = requestAnimationFrame(checkSpeech);
+      };
+
+      checkSpeech();
+    } catch (e) {
+      // Non-fatal
+    }
+
+    return () => {
+      if (speechAnimFrameRef.current) cancelAnimationFrame(speechAnimFrameRef.current);
+      if (speechAnalyserAudioCtxRef.current && speechAnalyserAudioCtxRef.current.state !== 'closed') {
+        try { speechAnalyserAudioCtxRef.current.close(); } catch (e) {}
+      }
+    };
+  }, [localStream, isAudioMuted, inLobby]);
+
+  // Recording elapsed timer
   useEffect(() => {
     if (isRecording) {
-      timerRef.current = setInterval(() => {
+      recordingTimerRef.current = setInterval(() => {
         setRecordingSeconds(prev => prev + 1);
       }, 1000);
     } else {
-      clearInterval(timerRef.current);
+      clearInterval(recordingTimerRef.current);
       setRecordingSeconds(0);
     }
-    return () => clearInterval(timerRef.current);
+    return () => clearInterval(recordingTimerRef.current);
   }, [isRecording]);
 
   // ----------------------------------------------------
@@ -235,25 +331,37 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
     const pc = new RTCPeerConnection(ICE_SERVERS);
     peersRef.current[targetSocketId] = pc;
 
-    // Add local media tracks to peer connection
+    // Add local media tracks
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => {
+      localStreamRef.current.getTracks().forEach(track => {
         pc.addTrack(track, localStreamRef.current);
       });
     }
 
-    // Handle remote media track arrival (audio + video)
+    // Remote track arrived
     pc.ontrack = (event) => {
-      console.log(`[WebRTC] Received remote stream from peer ${targetSocketId}:`, event.streams[0]);
       if (event.streams && event.streams[0]) {
-        setRemoteStreams((prev) => ({
+        const stream = event.streams[0];
+        setRemoteStreams(prev => ({
           ...prev,
-          [targetSocketId]: event.streams[0]
+          [targetSocketId]: stream
         }));
+
+        // If recording is active, dynamically connect new peer audio to mixer destination!
+        if (recordingAudioCtxRef.current && recordingDestinationRef.current) {
+          if (stream.getAudioTracks().length > 0) {
+            try {
+              const peerSource = recordingAudioCtxRef.current.createMediaStreamSource(stream);
+              peerSource.connect(recordingDestinationRef.current);
+            } catch (err) {
+              console.warn('[Recording Mixer] Peer audio connect note:', err);
+            }
+          }
+        }
       }
     };
 
-    // Forward ICE candidates to remote peer via Socket.io signaling
+    // Forward ICE candidate
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         socket.emit('ice-candidate', {
@@ -263,7 +371,14 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
       }
     };
 
-    // If initiator, negotiate and send offer
+    // Handle connection state changes for reconnect recovery
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed') {
+        pc.restartIce?.();
+      }
+    };
+
+    // Offer negotiation
     if (isInitiator) {
       pc.onnegotiationneeded = async () => {
         try {
@@ -275,7 +390,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
             sdp: offer
           });
         } catch (err) {
-          console.error('[WebRTC] Error creating offer:', err);
+          console.error('[WebRTC] Offer error:', err);
         }
       };
     }
@@ -284,15 +399,17 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   };
 
   // ----------------------------------------------------
-  // Handle Socket.io connection & WebRTC signaling
+  // Join Room & Initialize Socket.IO Signaling
   // ----------------------------------------------------
-  const joinMeetingRoom = () => {
+  const handleJoinMeeting = (confirmedName) => {
     setInLobby(false);
 
-    // Initialize Socket.io connection (pointing to Render backend or current host)
-    const socketUrl = import.meta.env.VITE_BACKEND_URL || '/';
+    const rawSocketUrl = import.meta.env.VITE_BACKEND_URL || (window.location.hostname === 'localhost' ? '/' : 'https://intellmeet-backend-uuk5.onrender.com');
+    const socketUrl = rawSocketUrl.trim().replace(/\/$/, '');
     const socket = io(socketUrl, {
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000
     });
     socketRef.current = socket;
 
@@ -300,34 +417,40 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
       roomId,
       user: {
         _id: user?._id,
-        name: user?.name || 'Guest Participant',
+        name: confirmedName || user?.name || 'Guest Participant',
         avatar: user?.avatar,
-        role: user?.role || 'member'
+        role: userRole
       }
     });
 
-    // Existing participants in the room
+    // Room initial state (host, presenter, recording, settings)
+    socket.on('room-state', (state) => {
+      if (state.hostSocketId) setHostSocketId(state.hostSocketId);
+      if (state.presenter) setPresenter(state.presenter);
+      if (state.recording?.isRecording) setIsRecording(true);
+      if (state.settings?.allowScreenShare !== undefined) {
+        setAllowScreenShare(state.settings.allowScreenShare);
+      }
+    });
+
+    // Existing participants
     socket.on('all-users', (users) => {
-      console.log('[WebRTC] Received all-users list:', users);
-      setParticipants(users);
-      // For each existing user, initiate a WebRTC peer connection
-      users.forEach((existingUser) => {
+      setRemoteParticipants(users);
+      users.forEach(existingUser => {
         createPeerConnection(existingUser.socketId, true, socket);
       });
     });
 
-    // New participant joined the room
+    // New participant joined
     socket.on('user-connected', (newUser) => {
-      console.log('[WebRTC] New user connected:', newUser);
-      setParticipants(prev => {
+      setRemoteParticipants(prev => {
         if (prev.some(p => p.socketId === newUser.socketId)) return prev;
         return [...prev, newUser];
       });
     });
 
-    // WebRTC Offer received
+    // WebRTC Offer
     socket.on('offer', async ({ callerSocketId, sdp }) => {
-      console.log('[WebRTC] Handling offer from caller:', callerSocketId);
       const pc = createPeerConnection(callerSocketId, false, socket);
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(sdp));
@@ -339,7 +462,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
           sdp: answer
         });
 
-        // Drain any queued ICE candidates
+        // Drain ICE queue
         if (iceQueueRef.current[callerSocketId]) {
           for (const cand of iceQueueRef.current[callerSocketId]) {
             await pc.addIceCandidate(new RTCIceCandidate(cand));
@@ -347,18 +470,16 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
           delete iceQueueRef.current[callerSocketId];
         }
       } catch (err) {
-        console.error('[WebRTC] Error handling offer:', err);
+        console.error('[WebRTC] Offer handling error:', err);
       }
     });
 
-    // WebRTC Answer received
+    // WebRTC Answer
     socket.on('answer', async ({ callerSocketId, sdp }) => {
-      console.log('[WebRTC] Handling answer from:', callerSocketId);
       const pc = peersRef.current[callerSocketId];
       if (pc) {
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-          // Drain any queued ICE candidates
           if (iceQueueRef.current[callerSocketId]) {
             for (const cand of iceQueueRef.current[callerSocketId]) {
               await pc.addIceCandidate(new RTCIceCandidate(cand));
@@ -366,19 +487,19 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
             delete iceQueueRef.current[callerSocketId];
           }
         } catch (err) {
-          console.error('[WebRTC] Error setting remote description from answer:', err);
+          console.error('[WebRTC] Answer handling error:', err);
         }
       }
     });
 
-    // WebRTC ICE Candidate received
+    // WebRTC ICE Candidate
     socket.on('ice-candidate', async ({ callerSocketId, candidate }) => {
       const pc = peersRef.current[callerSocketId];
       if (pc && pc.remoteDescription && pc.remoteDescription.type) {
         try {
           await pc.addIceCandidate(new RTCIceCandidate(candidate));
         } catch (err) {
-          console.warn('[WebRTC] Error adding ICE candidate:', err);
+          console.warn('[WebRTC] ICE candidate error:', err);
         }
       } else {
         if (!iceQueueRef.current[callerSocketId]) {
@@ -388,9 +509,9 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
       }
     });
 
-    // User disconnected
+    // User disconnected / left
     socket.on('user-disconnected', ({ socketId }) => {
-      setParticipants(prev => prev.filter(p => p.socketId !== socketId));
+      setRemoteParticipants(prev => prev.filter(p => p.socketId !== socketId));
       if (peersRef.current[socketId]) {
         peersRef.current[socketId].close();
         delete peersRef.current[socketId];
@@ -400,11 +521,56 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
         delete next[socketId];
         return next;
       });
+      // Clear presenter if this peer was sharing
+      setPresenter(prev => (prev?.socketId === socketId ? null : prev));
     });
 
-    // Media toggled by remote user
+    // Screen sharing started by someone
+    socket.on('screen-share-started', (data) => {
+      setPresenter({
+        socketId: data.socketId,
+        name: data.name
+      });
+    });
+
+    // Screen sharing stopped
+    socket.on('screen-share-stopped', () => {
+      setPresenter(null);
+    });
+
+    // Screen share permission denied
+    socket.on('screen-share-denied', ({ message }) => {
+      alert(message || 'Screen sharing is currently restricted by the host.');
+    });
+
+    // Host actions: Force mute command received
+    socket.on('force-mute', ({ by }) => {
+      if (localStreamRef.current) {
+        const audioTrack = localStreamRef.current.getAudioTracks()[0];
+        if (audioTrack) {
+          audioTrack.enabled = false;
+          setIsAudioMuted(true);
+        }
+      }
+      alert(`You were muted by ${by || 'the host'}.`);
+    });
+
+    // Host actions: Kicked from meeting
+    socket.on('kicked-from-meeting', ({ reason }) => {
+      alert(reason || 'You were removed from the meeting by the host.');
+      handleLeaveOrEnd();
+    });
+
+    // Host actions: Settings updated
+    socket.on('meeting-settings-updated', (settings) => {
+      if (settings?.allowScreenShare !== undefined) {
+        setAllowScreenShare(settings.allowScreenShare);
+      }
+    });
+
+    // Remote media toggled
     socket.on('user-media-toggled', ({ socketId, type, enabled }) => {
-      setParticipants(prev => prev.map(p => {
+      setRemoteParticipants(prev => prev.map(p => {
         if (p.socketId === socketId) {
           return {
             ...p,
@@ -416,9 +582,9 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
       }));
     });
 
-    // Hand raised by remote user
+    // Hand raised toggle
     socket.on('user-hand-toggled', ({ socketId, raised }) => {
-      setParticipants(prev => prev.map(p => {
+      setRemoteParticipants(prev => prev.map(p => {
         if (p.socketId === socketId) {
           return { ...p, isHandRaised: raised };
         }
@@ -426,21 +592,44 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
       }));
     });
 
-    // In-meeting chat
-    socket.on('receive-chat', (message) => {
-      setChatMessages(prev => [...prev, message]);
+    // Active speaker indication
+    socket.on('user-speaking', ({ socketId, isSpeaking }) => {
+      setRemoteParticipants(prev => prev.map(p => {
+        if (p.socketId === socketId) {
+          return { ...p, isSpeaking };
+        }
+        return p;
+      }));
+      if (isSpeaking) {
+        setActiveSpeakerId(socketId);
+      } else if (activeSpeakerId === socketId) {
+        setActiveSpeakerId(null);
+      }
     });
 
-    // Real-time live transcript banner
+    // Recording status synchronized across all participants
+    socket.on('recording-status-changed', (recState) => {
+      setIsRecording(recState.isRecording);
+    });
+
+    // Chat received
+    socket.on('receive-chat', (message) => {
+      setChatMessages(prev => [...prev, message]);
+      if (activeTab !== 'chat') {
+        setUnreadChatCount(prev => prev + 1);
+      }
+    });
+
+    // Live AI Speech-to-Text transcript
     socket.on('transcript-update', (item) => {
       setLatestTranscript(item);
     });
 
-    // Start Web Speech API speech recognition if available
+    // Start Web Speech API transcription
     initSpeechRecognition(socket);
   };
 
-  // Browser Web Speech API for real-time speech-to-text
+  // Browser Web Speech API for AI Speech-to-Text
   const initSpeechRecognition = (socket) => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
@@ -465,41 +654,18 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
           }
         };
 
-        recognition.onerror = (e) => {
-          console.warn('[SpeechRecognition] Note:', e.error);
-        };
-
+        recognition.onerror = () => {};
         recognition.start();
         recognitionRef.current = recognition;
-        setSpeechRecognitionActive(true);
       } catch (err) {
-        console.warn('[SpeechRecognition] Init bypassed:', err.message);
+        console.warn('[SpeechRecognition] Init note:', err.message);
       }
     }
   };
 
-  // Simulate speaking for instant demo & evaluation
-  const handleSimulateSpeech = () => {
-    const sampleSentences = [
-      "Let's confirm the WebRTC latency benchmark is holding below 150ms.",
-      "Action item: I will finalize the Kubernetes Helm chart deployment by Friday.",
-      "We need to audit the JWT refresh token security against OWASP Top 10.",
-      "The AI summary engine successfully extracted our key milestones for this sprint."
-    ];
-    const randomSentence = sampleSentences[Math.floor(Math.random() * sampleSentences.length)];
-    const transcriptItem = {
-      speaker: user?.name || 'Alex Rivera',
-      userId: user?._id,
-      text: randomSentence,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    };
-    setLatestTranscript(transcriptItem);
-    if (socketRef.current) {
-      socketRef.current.emit('live-transcript', { roomId, item: transcriptItem });
-    }
-  };
-
-  // Toggle Audio
+  // ----------------------------------------------------
+  // Audio & Video Toggles
+  // ----------------------------------------------------
   const toggleAudio = () => {
     const stream = localStreamRef.current;
     if (stream) {
@@ -516,7 +682,6 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
     }
   };
 
-  // Toggle Video
   const toggleVideo = () => {
     const stream = localStreamRef.current;
     if (stream) {
@@ -533,32 +698,51 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
     }
   };
 
-  // Toggle Screen Share
+  // ----------------------------------------------------
+  // Screen Sharing (Highest Priority Feature)
+  // ----------------------------------------------------
   const toggleScreenShare = async () => {
     if (!isScreenSharing) {
+      // Check permission from host settings
+      const isUserHost = userRole === 'host' || user?._id === meeting?.host?._id;
+      if (!allowScreenShare && !isUserHost) {
+        alert('Screen sharing has been locked by the meeting host.');
+        return;
+      }
+
       try {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            cursor: 'always',
+            displaySurface: 'monitor'
+          },
+          audio: true // Request tab/system audio where supported
+        });
+
         const screenTrack = screenStream.getVideoTracks()[0];
         screenShareTrackRef.current = screenTrack;
+        setScreenShareStream(screenStream);
         setIsScreenSharing(true);
 
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = screenStream;
-        }
-
-        // Replace video track for all connected peers
-        Object.values(peersRef.current).forEach((pc) => {
-          const sender = pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+        // Replace video track for all remote peer connections
+        Object.values(peersRef.current).forEach(pc => {
+          const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
           if (sender) {
             sender.replaceTrack(screenTrack);
           }
         });
 
+        // Notify socket server and all peers
+        if (socketRef.current) {
+          socketRef.current.emit('start-screen-share', { roomId });
+        }
+
+        // Handle user clicking native browser "Stop sharing" bar
         screenTrack.onended = () => {
           stopScreenSharing();
         };
       } catch (err) {
-        console.warn('Screen share canceled or not permitted:', err.message);
+        console.warn('[Screen Share] Canceled or not supported:', err.message);
       }
     } else {
       stopScreenSharing();
@@ -568,24 +752,29 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   const stopScreenSharing = () => {
     if (screenShareTrackRef.current) {
       screenShareTrackRef.current.stop();
+      screenShareTrackRef.current = null;
     }
+    setScreenShareStream(null);
     setIsScreenSharing(false);
-    if (localVideoRef.current && localStreamRef.current) {
-      localVideoRef.current.srcObject = localStreamRef.current;
-    }
-    // Restore original video track to all connected peers
-    const originalVideoTrack = localStreamRef.current?.getVideoTracks()[0];
+
+    // Restore original camera track on all peer connections
+    const originalVideoTrack = originalCameraTrackRef.current;
     if (originalVideoTrack) {
-      Object.values(peersRef.current).forEach((pc) => {
-        const sender = pc.getSenders().find((s) => s.track && s.track.kind === 'video');
+      Object.values(peersRef.current).forEach(pc => {
+        const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
         if (sender) {
           sender.replaceTrack(originalVideoTrack);
         }
       });
     }
+
+    // Notify socket server
+    if (socketRef.current) {
+      socketRef.current.emit('stop-screen-share', { roomId });
+    }
   };
 
-  // Raise Hand
+  // Raise / Lower Hand
   const toggleHand = () => {
     const nextState = !isHandRaised;
     setIsHandRaised(nextState);
@@ -595,140 +784,198 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   };
 
   // Send In-Meeting Chat
-  const handleSendChat = (e) => {
-    e.preventDefault();
-    if (!chatInput.trim() || !socketRef.current) return;
-
+  const handleSendChat = (text) => {
+    if (!text || !socketRef.current) return;
     socketRef.current.emit('send-chat', {
       roomId,
       message: {
         sender: user?.name || 'You',
         senderId: user?._id,
         avatar: user?.avatar,
-        text: chatInput.trim()
+        text
       }
     });
-    setChatInput('');
   };
 
   // ----------------------------------------------------
-  // In-Meeting Video & Audio Recording (MediaRecorder)
+  // Host Management Controls
   // ----------------------------------------------------
-  const startRecording = async () => {
+  const handleHostMuteUser = (targetSocketId) => {
+    if (socketRef.current) {
+      socketRef.current.emit('host-mute-user', { roomId, targetSocketId });
+    }
+  };
+
+  const handleHostMuteAll = () => {
+    if (socketRef.current) {
+      socketRef.current.emit('host-mute-all', { roomId });
+    }
+  };
+
+  const handleHostKickUser = (targetSocketId) => {
+    if (confirm('Are you sure you want to remove this participant from the meeting?')) {
+      if (socketRef.current) {
+        socketRef.current.emit('host-kick-user', { roomId, targetSocketId });
+      }
+    }
+  };
+
+  const handleToggleScreenSharePermission = (allowed) => {
+    setAllowScreenShare(allowed);
+    if (socketRef.current) {
+      socketRef.current.emit('host-toggle-screen-share-permission', {
+        roomId,
+        allowScreenShare: allowed
+      });
+    }
+  };
+
+  // ----------------------------------------------------
+  // Full-Screen & Meeting Recording with Mixed Audio
+  // ----------------------------------------------------
+  const handleOpenRecordingDialog = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      setRecordingModalMode('select');
+      setRecordingModalOpen(true);
+    }
+  };
+
+  const startRecording = async (mode) => {
     try {
       recordedChunksRef.current = [];
+      recordingStartTimeRef.current = Date.now();
+
+      let videoStreamToRecord = null;
       let displayStream = null;
 
-      // 1. Capture screen or tab
-      if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
-        try {
-          displayStream = await navigator.mediaDevices.getDisplayMedia({
-            video: true,
-            audio: true
-          });
-        } catch (err) {
-          console.warn('[Recording] Screen picker canceled or not supported:', err.message);
-        }
-      }
+      // 1. Capture Video Track
+      if (mode === 'screen') {
+        // Mode B: Entire Screen / Window / Tab Picker
+        displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: { displaySurface: 'monitor' },
+          audio: true
+        });
+        videoStreamToRecord = displayStream;
+      } else {
+        // Mode A: Meeting Composition Canvas
+        // Creates a 1280x720 30fps canvas rendering the meeting layout
+        const canvas = document.createElement('canvas');
+        canvas.width = 1280;
+        canvas.height = 720;
+        recordingCanvasRef.current = canvas;
+        const ctx = canvas.getContext('2d');
 
-      // Determine video track
-      let videoTrack = null;
-      if (displayStream && displayStream.getVideoTracks().length > 0) {
-        videoTrack = displayStream.getVideoTracks()[0];
-      } else if (localStreamRef.current && localStreamRef.current.getVideoTracks().length > 0) {
-        videoTrack = localStreamRef.current.getVideoTracks()[0];
-      }
+        const renderCompositeFrame = () => {
+          // Draw dark meeting background
+          const grad = ctx.createLinearGradient(0, 0, 1280, 720);
+          grad.addColorStop(0, '#070a14');
+          grad.addColorStop(1, '#0e1526');
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, 0, 1280, 720);
 
-      if (!videoTrack && (!localStreamRef.current || localStreamRef.current.getTracks().length === 0)) {
-        alert('No camera, microphone, or display stream available to record.');
-        return;
-      }
+          // If someone is sharing screen, draw screen in center stage
+          const currentPresenterStream = isScreenSharing
+            ? screenShareStream
+            : presenter?.socketId
+            ? remoteStreamsRef.current[presenter.socketId]
+            : null;
 
-      // 2. Multi-Audio Mixer using Web Audio API
-      // Mixes: (a) Local User Microphone + (b) All Remote Participants' Voices + (c) Screen/Tab Audio
-      let mixedAudioTrack = null;
-      try {
-        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-        const audioCtx = new AudioContextClass();
-        audioContextRef.current = audioCtx;
-        const destination = audioCtx.createMediaStreamDestination();
-        let hasMixedAudio = false;
-
-        // (a) User's local microphone audio
-        if (localStreamRef.current && localStreamRef.current.getAudioTracks().length > 0) {
-          try {
-            const micTrack = localStreamRef.current.getAudioTracks()[0];
-            const micStream = new MediaStream([micTrack]);
-            const micSource = audioCtx.createMediaStreamSource(micStream);
-            micSource.connect(destination);
-            hasMixedAudio = true;
-          } catch (micErr) {
-            console.warn('[Recording] Could not mix local mic:', micErr);
-          }
-        }
-
-        // (b) Remote participants' audio streams
-        if (remoteStreamsRef.current) {
-          Object.values(remoteStreamsRef.current).forEach((rStream) => {
-            if (rStream && rStream.getAudioTracks().length > 0) {
-              try {
-                const peerTrack = rStream.getAudioTracks()[0];
-                const peerStream = new MediaStream([peerTrack]);
-                const peerSource = audioCtx.createMediaStreamSource(peerStream);
-                peerSource.connect(destination);
-                hasMixedAudio = true;
-              } catch (peerErr) {
-                console.warn('[Recording] Could not mix peer audio:', peerErr);
+          if (currentPresenterStream) {
+            // Find active video element on stage
+            const stageVideo = document.querySelector('#meeting-stage-container video');
+            if (stageVideo && stageVideo.videoWidth) {
+              const aspect = stageVideo.videoWidth / stageVideo.videoHeight;
+              let drawW = 1240;
+              let drawH = drawW / aspect;
+              if (drawH > 680) {
+                drawH = 680;
+                drawW = drawH * aspect;
               }
+              const drawX = (1280 - drawW) / 2;
+              const drawY = (720 - drawH) / 2;
+              ctx.drawImage(stageVideo, drawX, drawY, drawW, drawH);
             }
-          });
-        }
-
-        // (c) Display/Tab audio if shared
-        if (displayStream && displayStream.getAudioTracks().length > 0) {
-          try {
-            const dispTrack = displayStream.getAudioTracks()[0];
-            const dispStream = new MediaStream([dispTrack]);
-            const dispSource = audioCtx.createMediaStreamSource(dispStream);
-            dispSource.connect(destination);
-            hasMixedAudio = true;
-          } catch (dispErr) {
-            console.warn('[Recording] Could not mix display audio:', dispErr);
+          } else {
+            // Render video tiles from meeting grid
+            const videoEls = document.querySelectorAll('#meeting-stage-container video');
+            if (videoEls.length === 1) {
+              const v = videoEls[0];
+              if (v.videoWidth) ctx.drawImage(v, 160, 40, 960, 640);
+            } else if (videoEls.length >= 2) {
+              const w = 600;
+              const h = 338;
+              if (videoEls[0] && videoEls[0].videoWidth) ctx.drawImage(videoEls[0], 25, 190, w, h);
+              if (videoEls[1] && videoEls[1].videoWidth) ctx.drawImage(videoEls[1], 655, 190, w, h);
+            }
           }
-        }
 
-        if (hasMixedAudio && destination.stream.getAudioTracks().length > 0) {
-          mixedAudioTrack = destination.stream.getAudioTracks()[0];
-        }
-      } catch (audioCtxErr) {
-        console.warn('[Recording] Web Audio Context not supported, falling back to direct stream:', audioCtxErr);
+          // Watermark badge: IntellMeet Meeting
+          ctx.fillStyle = 'rgba(10, 15, 26, 0.8)';
+          ctx.fillRect(20, 20, 240, 36);
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 14px sans-serif';
+          ctx.fillText(`IntellMeet: ${roomId}`, 32, 44);
+
+          recordingAnimFrameRef.current = requestAnimationFrame(renderCompositeFrame);
+        };
+
+        renderCompositeFrame();
+        videoStreamToRecord = canvas.captureStream(30);
       }
 
-      // 3. Assemble combined recording stream
-      const tracksToRecord = [];
-      if (videoTrack) tracksToRecord.push(videoTrack);
-      if (mixedAudioTrack) {
-        tracksToRecord.push(mixedAudioTrack);
-      } else if (localStreamRef.current && localStreamRef.current.getAudioTracks().length > 0) {
-        tracksToRecord.push(localStreamRef.current.getAudioTracks()[0]);
-      } else if (displayStream && displayStream.getAudioTracks().length > 0) {
-        tracksToRecord.push(displayStream.getAudioTracks()[0]);
+      // 2. Web Audio Multi-Track Mixer
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      const audioCtx = new AudioContextClass();
+      recordingAudioCtxRef.current = audioCtx;
+      const destination = audioCtx.createMediaStreamDestination();
+      recordingDestinationRef.current = destination;
+
+      // Mix local microphone
+      if (localStreamRef.current && localStreamRef.current.getAudioTracks().length > 0) {
+        try {
+          const micSource = audioCtx.createMediaStreamSource(new MediaStream([localStreamRef.current.getAudioTracks()[0]]));
+          micSource.connect(destination);
+        } catch (e) {}
       }
 
-      const streamToRecord = new MediaStream(tracksToRecord);
+      // Mix all remote participant audio streams
+      Object.values(remoteStreamsRef.current).forEach(rStream => {
+        if (rStream && rStream.getAudioTracks().length > 0) {
+          try {
+            const peerSource = audioCtx.createMediaStreamSource(rStream);
+            peerSource.connect(destination);
+          } catch (e) {}
+        }
+      });
 
+      // Mix system/display audio if captured via Mode B
+      if (displayStream && displayStream.getAudioTracks().length > 0) {
+        try {
+          const dispSource = audioCtx.createMediaStreamSource(displayStream);
+          dispSource.connect(destination);
+        } catch (e) {}
+      }
+
+      // 3. Assemble tracks to record
+      const tracks = [];
+      if (videoStreamToRecord.getVideoTracks().length > 0) {
+        tracks.push(videoStreamToRecord.getVideoTracks()[0]);
+      }
+      if (destination.stream.getAudioTracks().length > 0) {
+        tracks.push(destination.stream.getAudioTracks()[0]);
+      }
+
+      const streamToRecord = new MediaStream(tracks);
+
+      // Determine supported MIME type
       let mimeType = 'video/webm;codecs=vp9,opus';
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'video/webm;codecs=vp8,opus';
-      }
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'video/webm';
-      }
-      if (!MediaRecorder.isTypeSupported(mimeType) && MediaRecorder.isTypeSupported('video/mp4')) {
-        mimeType = 'video/mp4';
-      }
+      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm;codecs=vp8,opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
+      if (!MediaRecorder.isTypeSupported(mimeType) && MediaRecorder.isTypeSupported('video/mp4')) mimeType = 'video/mp4';
 
-      const options = mimeType && MediaRecorder.isTypeSupported(mimeType) ? { mimeType } : undefined;
+      const options = MediaRecorder.isTypeSupported(mimeType) ? { mimeType } : undefined;
       const recorder = options ? new MediaRecorder(streamToRecord, options) : new MediaRecorder(streamToRecord);
 
       recorder.ondataavailable = (event) => {
@@ -738,41 +985,49 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
       };
 
       recorder.onstop = () => {
-        if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-          try { audioContextRef.current.close(); } catch (e) {}
+        if (recordingAnimFrameRef.current) cancelAnimationFrame(recordingAnimFrameRef.current);
+        if (recordingAudioCtxRef.current && recordingAudioCtxRef.current.state !== 'closed') {
+          try { recordingAudioCtxRef.current.close(); } catch (e) {}
         }
+
+        const durationSeconds = Math.round((Date.now() - (recordingStartTimeRef.current || Date.now())) / 1000);
 
         if (recordedChunksRef.current.length > 0) {
           const fileType = recorder.mimeType || 'video/webm';
-          const ext = fileType.includes('mp4') ? 'mp4' : 'webm';
           const blob = new Blob(recordedChunksRef.current, { type: fileType });
           const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.style.display = 'none';
-          a.href = url;
-          a.download = `IntellMeet_Meeting_${roomId}_${new Date().toISOString().slice(0, 10)}.${ext}`;
-          document.body.appendChild(a);
-          a.click();
-          setTimeout(() => {
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
-          }, 400);
+
+          setCompletedRecording({
+            url,
+            blob,
+            duration: durationSeconds,
+            mimeType: fileType
+          });
+          setRecordingModalMode('preview');
+          setRecordingModalOpen(true);
         }
+
         setIsRecording(false);
+        if (socketRef.current) {
+          socketRef.current.emit('recording-status', { roomId, isRecording: false });
+        }
       };
 
-      // Automatically finalize recording if user stops sharing from browser banner
+      // Auto finalize if user stops screen capture from browser UI
       if (displayStream && displayStream.getVideoTracks().length > 0) {
-        displayStream.getVideoTracks()[0].addEventListener('ended', () => {
-          if (recorder.state !== 'inactive') {
-            recorder.stop();
-          }
-        });
+        displayStream.getVideoTracks()[0].onended = () => {
+          if (recorder.state !== 'inactive') recorder.stop();
+        };
       }
 
       recorder.start(1000);
-      mediaRecorderRef.current = recorder;
+      recordingMediaRecorderRef.current = recorder;
       setIsRecording(true);
+
+      // Broadcast recording state to room
+      if (socketRef.current) {
+        socketRef.current.emit('recording-status', { roomId, isRecording: true, mode });
+      }
     } catch (err) {
       console.error('[Recording Error]:', err);
       alert('Could not start recording: ' + err.message);
@@ -781,43 +1036,37 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
+    if (recordingMediaRecorderRef.current && recordingMediaRecorderRef.current.state !== 'inactive') {
+      recordingMediaRecorderRef.current.stop();
     }
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-      try { audioContextRef.current.close(); } catch (e) {}
-    }
-    setIsRecording(false);
   };
 
-  const toggleRecording = () => {
+  const handleSaveRecordingToHistory = async (recData) => {
+    const meetingId = meeting?._id || roomId;
+    await api.saveRecording(meetingId, {
+      recordingUrl: recData.url,
+      durationMinutes: Math.max(1, Math.round(recData.duration / 60))
+    });
+  };
+
+  // ----------------------------------------------------
+  // End / Leave Meeting
+  // ----------------------------------------------------
+  const handleLeaveOrEnd = async () => {
     if (isRecording) {
       stopRecording();
-    } else {
-      startRecording();
     }
-  };
-
-  // End / Leave Meeting
-  const handleLeaveOrEnd = async () => {
-    // If currently recording, finalize and download the video file
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch (recErr) {}
+    if (screenShareTrackRef.current) {
+      screenShareTrackRef.current.stop();
     }
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-      try { audioContextRef.current.close(); } catch (e) {}
-    }
-
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch (e) {}
     }
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => track.stop());
+      localStreamRef.current.getTracks().forEach(t => t.stop());
     }
-    // Close all peer connections
-    Object.values(peersRef.current).forEach((pc) => pc.close());
+
+    Object.values(peersRef.current).forEach(pc => pc.close());
     peersRef.current = {};
 
     if (socketRef.current) {
@@ -829,9 +1078,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
     if (targetMeetingId) {
       try {
         await api.endMeeting(targetMeetingId);
-      } catch (err) {
-        console.warn('Meeting ended silently:', err.message);
-      }
+      } catch (err) {}
     }
 
     onLeaveRoom();
@@ -843,118 +1090,33 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
     setTimeout(() => setCopiedCode(false), 2000);
   };
 
-  // Format recording timer
-  const formatTime = (secs) => {
-    const mins = Math.floor(secs / 60);
-    const remainder = secs % 60;
-    return `${mins.toString().padStart(2, '0')}:${remainder.toString().padStart(2, '0')}`;
-  };
-
   // ----------------------------------------------------
   // PRE-MEETING LOBBY VIEW
   // ----------------------------------------------------
   if (inLobby) {
     return (
-      <div style={{
-        maxWidth: '900px',
-        margin: '40px auto',
-        padding: '24px',
-        textAlign: 'center',
-        position: 'relative',
-        zIndex: 1
-      }}>
-        <div className="glass-panel" style={{ padding: '36px', borderRadius: '24px' }}>
-          
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '6px 14px', borderRadius: '30px', background: 'rgba(99, 102, 241, 0.15)', color: '#a5b4fc', fontSize: '0.82rem', marginBottom: '16px' }}>
-            <Radio size={14} color="#818cf8" />
-            <span>Pre-Meeting Calibration Lobby</span>
-          </div>
-
-          <h2 style={{ fontSize: '1.8rem', color: '#fff', marginBottom: '8px' }}>
-            {meeting?.title || 'Ready to join?'}
-          </h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '28px' }}>
-            Room Code: <code style={{ color: '#818cf8', fontWeight: 700 }}>{roomId}</code> &nbsp;•&nbsp; Test your camera and audio before entering
-          </p>
-
-          {/* Video Preview Box */}
-          <div style={{
-            maxWidth: '560px',
-            height: '320px',
-            margin: '0 auto 28px',
-            borderRadius: '16px',
-            overflow: 'hidden',
-            position: 'relative',
-            background: '#090d16',
-            border: '2px solid rgba(255, 255, 255, 0.1)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}>
-            <video
-              ref={lobbyVideoRef}
-              autoPlay
-              playsInline
-              muted
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                transform: 'scaleX(-1)',
-                display: isVideoOff ? 'none' : 'block'
-              }}
-            />
-
-            {isVideoOff && (
-              <div style={{ textAlign: 'center' }}>
-                <img
-                  src={user?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.name}`}
-                  alt="avatar"
-                  style={{ width: '90px', height: '90px', borderRadius: '50%', marginBottom: '12px' }}
-                />
-                <div style={{ fontSize: '1rem', color: '#fff', fontWeight: 600 }}>Camera is Off</div>
-              </div>
-            )}
-
-            {/* Quick Preview Toggles */}
-            <div style={{
-              position: 'absolute',
-              bottom: '16px',
-              display: 'flex',
-              gap: '12px'
-            }}>
-              <button
-                onClick={toggleAudio}
-                className={`btn ${isAudioMuted ? 'btn-danger' : 'btn-secondary'}`}
-                style={{ borderRadius: '50%', width: '46px', height: '46px', padding: 0 }}
-                title={isAudioMuted ? 'Unmute' : 'Mute'}
-              >
-                {isAudioMuted ? <MicOff size={20} /> : <Mic size={20} />}
-              </button>
-              <button
-                onClick={toggleVideo}
-                className={`btn ${isVideoOff ? 'btn-danger' : 'btn-secondary'}`}
-                style={{ borderRadius: '50%', width: '46px', height: '46px', padding: 0 }}
-                title={isVideoOff ? 'Turn Camera On' : 'Turn Camera Off'}
-              >
-                {isVideoOff ? <VideoOff size={20} /> : <Video size={20} />}
-              </button>
-            </div>
-          </div>
-
-          {/* Join Actions */}
-          <div style={{ display: 'flex', justifyContent: 'center', gap: '16px' }}>
-            <button onClick={onLeaveRoom} className="btn btn-secondary" style={{ padding: '12px 24px' }}>
-              Cancel
-            </button>
-            <button onClick={joinMeetingRoom} className="btn btn-primary" style={{ padding: '12px 32px', fontSize: '1rem' }}>
-              <Video size={18} />
-              <span>Join Meeting Now</span>
-            </button>
-          </div>
-
-        </div>
-      </div>
+      <MeetingLobby
+        roomId={roomId}
+        meeting={meeting}
+        user={user}
+        localStream={localStream}
+        isAudioMuted={isAudioMuted}
+        isVideoOff={isVideoOff}
+        onToggleAudio={toggleAudio}
+        onToggleVideo={toggleVideo}
+        audioDevices={audioDevices}
+        videoDevices={videoDevices}
+        audioOutputDevices={audioOutputDevices}
+        selectedAudioDeviceId={selectedAudioDeviceId}
+        selectedVideoDeviceId={selectedVideoDeviceId}
+        selectedAudioOutputDeviceId={selectedAudioOutputDeviceId}
+        onSelectAudioDevice={handleSelectAudioDevice}
+        onSelectVideoDevice={handleSelectVideoDevice}
+        onSelectAudioOutputDevice={(id) => setSelectedAudioOutputDeviceId(id)}
+        permissionError={permissionError}
+        onJoin={handleJoinMeeting}
+        onCancel={onLeaveRoom}
+      />
     );
   }
 
@@ -963,29 +1125,30 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   // ----------------------------------------------------
   return (
     <div style={{
-      height: 'calc(100vh - 68px)',
+      height: '100vh',
       display: 'flex',
       flexDirection: 'column',
-      background: '#070a12',
+      background: '#070a14',
       overflow: 'hidden',
       position: 'relative'
     }}>
-      
       {/* Top Header Bar */}
-      <div 
+      <header
         className="meeting-top-bar"
         style={{
-          padding: '12px 20px',
+          height: '56px',
+          padding: '0 20px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          background: 'rgba(14, 21, 36, 0.75)',
+          background: 'rgba(10, 15, 26, 0.85)',
+          backdropFilter: 'blur(16px)',
           borderBottom: '1px solid var(--border-subtle)',
-          zIndex: 20
+          zIndex: 25
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-          <h2 style={{ fontSize: '1.1rem', color: '#fff', fontWeight: 700 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+          <h2 style={{ fontSize: '1rem', color: '#ffffff', fontWeight: 700, margin: 0 }}>
             {meeting?.title || 'Enterprise Conference'}
           </h2>
 
@@ -1000,153 +1163,104 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
               borderRadius: '6px',
               background: 'rgba(255, 255, 255, 0.05)',
               border: '1px solid var(--border-subtle)',
-              color: '#a5b4fc',
+              color: '#818cf8',
               fontSize: '0.8rem',
               cursor: 'pointer'
             }}
           >
             <span>{roomId}</span>
-            {copiedCode ? <Check size={13} color="#34d399" /> : <Copy size={13} />}
+            {copiedCode ? <Check size={12} color="#34d399" /> : <Copy size={12} />}
           </button>
 
-          {/* Latency Pill */}
-          <span style={{ fontSize: '0.72rem', color: '#34d399', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          {/* WebRTC Latency Metric */}
+          <span style={{ fontSize: '0.74rem', color: '#34d399', display: 'flex', alignItems: 'center', gap: '4px' }}>
             <Zap size={12} />
-            <span>WebRTC 138ms</span>
+            <span>WebRTC 124ms</span>
           </span>
 
           {/* Recording Badge */}
           {isRecording && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#f87171', fontSize: '0.8rem', fontWeight: 600 }}>
-              <Circle size={10} fill="#ef4444" color="#ef4444" className="animate-pulse" />
-              <span>REC {formatTime(recordingSeconds)}</span>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              color: '#f87171',
+              fontSize: '0.78rem',
+              fontWeight: 700,
+              background: 'rgba(239, 68, 68, 0.15)',
+              padding: '3px 8px',
+              borderRadius: '12px',
+              border: '1px solid rgba(239, 68, 68, 0.3)'
+            }}>
+              <Circle size={8} fill="#ef4444" color="#ef4444" className="animate-pulse" />
+              <span>REC</span>
             </div>
           )}
         </div>
 
-        {/* Demo Quick Speech Simulator & Right Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button
-            onClick={handleSimulateSpeech}
-            className="btn btn-secondary"
-            style={{ padding: '6px 12px', fontSize: '0.78rem', border: '1px solid rgba(168, 85, 247, 0.4)' }}
-            title="Inject simulated speech sentence to test real-time AI transcription"
-          >
-            <Sparkles size={14} color="#c084fc" />
-            <span>Simulate Speech</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Main Content Area (Video Grid + Side Panel) */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
-        
-        {/* Video Grid Canvas */}
-        <div 
-          className="meeting-video-grid"
-          style={{
-            flex: 1,
-            padding: '16px',
-            display: 'grid',
-            gridTemplateColumns: participants.length > 0 ? 'repeat(auto-fit, minmax(280px, 1fr))' : '1fr',
-            gap: '16px',
-            alignContent: 'center',
-            overflowY: 'auto'
-          }}
-        >
-          
-          {/* Local User Video Tile */}
-          <div style={{
-            position: 'relative',
-            borderRadius: '16px',
-            overflow: 'hidden',
-            background: '#0d1322',
-            border: isHandRaised ? '2px solid #f59e0b' : '1px solid var(--border-subtle)',
-            aspectRatio: '16/9',
-            maxHeight: '75vh',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: 'var(--shadow-md)'
-          }}>
-            <video
-              ref={localVideoRef}
-              autoPlay
-              playsInline
-              muted
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'cover',
-                transform: isScreenSharing ? 'none' : 'scaleX(-1)',
-                display: isVideoOff && !isScreenSharing ? 'none' : 'block'
-              }}
-            />
-
-            {isVideoOff && !isScreenSharing && (
-              <div style={{ textAlign: 'center' }}>
-                <img
-                  src={user?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.name}`}
-                  alt="avatar"
-                  style={{ width: '84px', height: '84px', borderRadius: '50%', marginBottom: '10px', objectFit: 'cover' }}
-                />
-                <div style={{ color: '#fff', fontWeight: 600 }}>{user?.name || 'You'}</div>
-              </div>
-            )}
-
-            {/* Tile Info Overlay */}
+        {/* Right Section: Presenter Indicator & Participant count */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {presenter && (
             <div style={{
-              position: 'absolute',
-              bottom: '12px',
-              left: '12px',
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
-              background: 'rgba(0, 0, 0, 0.65)',
-              backdropFilter: 'blur(8px)',
-              padding: '4px 10px',
-              borderRadius: '20px',
-              fontSize: '0.8rem',
-              color: '#fff'
+              gap: '6px',
+              color: '#818cf8',
+              fontSize: '0.82rem',
+              fontWeight: 600
             }}>
-              <span>{user?.name || 'You'} (You)</span>
-              {isAudioMuted && <MicOff size={13} color="#f87171" />}
-              {isHandRaised && <Hand size={13} color="#f59e0b" />}
+              <span>Presenting: <strong>{isScreenSharing ? 'You' : presenter.name}</strong></span>
             </div>
-          </div>
-
-          {/* Remote Connected Peer Video & Audio Tiles */}
-          {participants.map((peer) => (
-            <RemoteVideoTile
-              key={peer.socketId}
-              peer={peer}
-              stream={remoteStreams[peer.socketId]}
-            />
-          ))}
-
+          )}
         </div>
+      </header>
 
-        {/* Live Real-Time Transcription Caption Banner */}
+      {/* Main Workspace Canvas (Video Stage + Side Drawer) */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
+        {/* Intelligent Video Stage (Screen Share Priority, Spotlight, Grid) */}
+        <MeetingStage
+          localUser={user}
+          localStream={localStream}
+          isAudioMuted={isAudioMuted}
+          isVideoOff={isVideoOff}
+          isHandRaised={isHandRaised}
+          isScreenSharing={isScreenSharing}
+          screenShareStream={screenShareStream}
+          remoteParticipants={remoteParticipants}
+          remoteStreams={remoteStreams}
+          presenter={presenter}
+          activeSpeakerId={activeSpeakerId}
+          currentUserId={user?._id}
+          isHost={userRole === 'host'}
+          onHostMute={handleHostMuteUser}
+          onHostKick={handleHostKickUser}
+          layoutMode={layoutMode}
+          setLayoutMode={setLayoutMode}
+        />
+
+        {/* Live Speech-to-Text AI Captions Banner */}
         {showLiveTranscript && latestTranscript && (
-          <div style={{
-            position: 'absolute',
-            bottom: '24px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            maxWidth: '680px',
-            width: '90%',
-            background: 'rgba(15, 23, 42, 0.92)',
-            backdropFilter: 'blur(16px)',
-            border: '1px solid rgba(99, 102, 241, 0.4)',
-            borderRadius: '14px',
-            padding: '12px 20px',
-            boxShadow: 'var(--shadow-lg)',
-            zIndex: 30,
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px',
-            animation: 'fadeIn 0.3s ease'
-          }}>
+          <div
+            style={{
+              position: 'absolute',
+              bottom: '20px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              maxWidth: '680px',
+              width: '90%',
+              background: 'rgba(10, 15, 26, 0.94)',
+              backdropFilter: 'blur(20px)',
+              border: '1px solid rgba(99, 102, 241, 0.35)',
+              borderRadius: '14px',
+              padding: '12px 20px',
+              boxShadow: 'var(--shadow-lg)',
+              zIndex: 30,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              animation: 'fadeIn 0.25s ease'
+            }}
+          >
             <div style={{
               width: '32px',
               height: '32px',
@@ -1170,286 +1284,73 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
           </div>
         )}
 
-        {/* Slide-out Side Drawer (Chat / Participants / Shared Notes) */}
-        {activeTab && (
-          <div 
-            className="meeting-side-drawer glass-panel"
-            style={{
-              width: '340px',
-              height: '100%',
-              borderRadius: 0,
-              borderLeft: '1px solid var(--border-subtle)',
-              borderTop: 'none',
-              borderBottom: 'none',
-              borderRight: 'none',
-              display: 'flex',
-              flexDirection: 'column',
-              zIndex: 25
-            }}
-          >
-            {/* Drawer Header */}
-            <div style={{
-              padding: '16px',
-              borderBottom: '1px solid var(--border-subtle)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between'
-            }}>
-              <h3 style={{ fontSize: '1rem', color: '#fff', textTransform: 'capitalize' }}>
-                {activeTab === 'chat' ? 'In-Meeting Chat' : activeTab === 'participants' ? `Participants (${participants.length + 1})` : 'Shared Notes'}
-              </h3>
-              <button
-                onClick={() => setActiveTab(null)}
-                style={{ background: 'transparent', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontSize: '1.1rem' }}
-              >
-                ✕
-              </button>
-            </div>
-
-            {/* Chat Body */}
-            {activeTab === 'chat' && (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                <div style={{ flex: 1, padding: '16px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {chatMessages.length === 0 ? (
-                    <div style={{ textAlign: 'center', color: 'var(--text-dim)', fontSize: '0.85rem', marginTop: '40px' }}>
-                      No messages yet. Send a message to participants!
-                    </div>
-                  ) : (
-                    chatMessages.map((msg, i) => (
-                      <div key={i} style={{ textAlign: 'left' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
-                          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#a5b4fc' }}>{msg.sender}</span>
-                          <span style={{ fontSize: '0.68rem', color: 'var(--text-dim)' }}>
-                            {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        </div>
-                        <div style={{
-                          background: 'rgba(255, 255, 255, 0.06)',
-                          padding: '8px 12px',
-                          borderRadius: '8px',
-                          fontSize: '0.85rem',
-                          color: '#fff'
-                        }}>
-                          {msg.text}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-
-                {/* Chat Input */}
-                <form onSubmit={handleSendChat} style={{ padding: '12px', borderTop: '1px solid var(--border-subtle)', display: 'flex', gap: '8px' }}>
-                  <input
-                    type="text"
-                    placeholder="Type a message..."
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    className="input-field"
-                    style={{ padding: '8px 12px' }}
-                  />
-                  <button type="submit" className="btn btn-primary" style={{ padding: '8px 12px' }}>
-                    <Send size={15} />
-                  </button>
-                </form>
-              </div>
-            )}
-
-            {/* Participants Body */}
-            {activeTab === 'participants' && (
-              <div style={{ flex: 1, padding: '16px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {/* Local user */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: '8px', background: 'rgba(255, 255, 255, 0.04)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <img src={user?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.name}`} alt="user" style={{ width: '32px', height: '32px', borderRadius: '50%' }} />
-                    <div>
-                      <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff' }}>{user?.name || 'You'} (You)</div>
-                      <div style={{ fontSize: '0.7rem', color: '#818cf8' }}>Host</div>
-                    </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: '6px' }}>
-                    {isAudioMuted ? <MicOff size={15} color="#f87171" /> : <Mic size={15} color="#34d399" />}
-                  </div>
-                </div>
-
-                {/* Peers */}
-                {participants.map((peer) => (
-                  <div key={peer.socketId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: '8px', background: 'rgba(255, 255, 255, 0.04)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <img src={peer.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${peer.name}`} alt="peer" style={{ width: '32px', height: '32px', borderRadius: '50%' }} />
-                      <div>
-                        <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#fff' }}>{peer.name}</div>
-                        <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>{peer.role || 'Member'}</div>
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: '6px' }}>
-                      {peer.isAudioMuted ? <MicOff size={15} color="#f87171" /> : <Mic size={15} color="#34d399" />}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Shared Notes Body */}
-            {activeTab === 'notes' && (
-              <div style={{ flex: 1, padding: '16px', display: 'flex', flexDirection: 'column' }}>
-                <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', marginBottom: '8px' }}>
-                  Real-time synchronized whiteboard notes:
-                </p>
-                <textarea
-                  value={sharedNotes}
-                  onChange={(e) => setSharedNotes(e.target.value)}
-                  style={{
-                    flex: 1,
-                    width: '100%',
-                    background: 'rgba(15, 23, 42, 0.8)',
-                    color: '#f8fafc',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: '8px',
-                    padding: '12px',
-                    fontFamily: 'monospace',
-                    fontSize: '0.85rem',
-                    resize: 'none',
-                    outline: 'none'
-                  }}
-                />
-              </div>
-            )}
-
-          </div>
-        )}
-
+        {/* Slide-out Side Drawer (Chat, Participants, Notes, Info) */}
+        <MeetingSideDrawer
+          activeTab={activeTab}
+          onClose={() => setActiveTab(null)}
+          chatMessages={chatMessages}
+          onSendChat={handleSendChat}
+          participants={remoteParticipants}
+          localUser={user}
+          isAudioMuted={isAudioMuted}
+          isVideoOff={isVideoOff}
+          isHost={userRole === 'host'}
+          onHostMuteUser={handleHostMuteUser}
+          onHostMuteAll={handleHostMuteAll}
+          onHostKickUser={handleHostKickUser}
+          allowScreenShare={allowScreenShare}
+          onToggleScreenSharePermission={handleToggleScreenSharePermission}
+          sharedNotes={sharedNotes}
+          onUpdateNotes={setSharedNotes}
+          roomId={roomId}
+          meeting={meeting}
+        />
       </div>
 
-      {/* Bottom Controls Dock */}
-      <div 
-        className="meeting-controls-dock"
-        style={{
-          height: '76px',
-          background: 'rgba(10, 15, 26, 0.95)',
-          borderTop: '1px solid var(--border-subtle)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '12px',
-          padding: '0 16px',
-          zIndex: 30
+      {/* Bottom Meeting Controls Dock */}
+      <MeetingControls
+        isAudioMuted={isAudioMuted}
+        onToggleAudio={toggleAudio}
+        isVideoOff={isVideoOff}
+        onToggleVideo={toggleVideo}
+        isScreenSharing={isScreenSharing}
+        onToggleScreenShare={toggleScreenShare}
+        isRecording={isRecording}
+        recordingSeconds={recordingSeconds}
+        onToggleRecording={handleOpenRecordingDialog}
+        showLiveTranscript={showLiveTranscript}
+        onToggleLiveTranscript={() => setShowLiveTranscript(!showLiveTranscript)}
+        isHandRaised={isHandRaised}
+        onToggleHand={toggleHand}
+        activeTab={activeTab}
+        onToggleTab={(tab) => {
+          setActiveTab(tab);
+          if (tab === 'chat') setUnreadChatCount(0);
         }}
-      >
-        
-        {/* Mic Toggle */}
-        <button
-          onClick={toggleAudio}
-          className={`btn ${isAudioMuted ? 'btn-danger' : 'btn-secondary'}`}
-          style={{ width: '48px', height: '48px', borderRadius: '50%', padding: 0 }}
-          title={isAudioMuted ? 'Unmute Mic' : 'Mute Mic'}
-        >
-          {isAudioMuted ? <MicOff size={20} /> : <Mic size={20} />}
-        </button>
+        unreadChatCount={unreadChatCount}
+        participantCount={remoteParticipants.length + 1}
+        onLeaveCall={handleLeaveOrEnd}
+        isHost={userRole === 'host'}
+        roomId={roomId}
+        layoutMode={layoutMode}
+        onToggleLayoutMode={() => setLayoutMode(layoutMode === 'grid' ? 'stage' : 'grid')}
+        audioDevices={audioDevices}
+        videoDevices={videoDevices}
+        selectedAudioDeviceId={selectedAudioDeviceId}
+        selectedVideoDeviceId={selectedVideoDeviceId}
+        onSelectAudioDevice={handleSelectAudioDevice}
+        onSelectVideoDevice={handleSelectVideoDevice}
+      />
 
-        {/* Video Toggle */}
-        <button
-          onClick={toggleVideo}
-          className={`btn ${isVideoOff ? 'btn-danger' : 'btn-secondary'}`}
-          style={{ width: '48px', height: '48px', borderRadius: '50%', padding: 0 }}
-          title={isVideoOff ? 'Start Camera' : 'Stop Camera'}
-        >
-          {isVideoOff ? <VideoOff size={20} /> : <Video size={20} />}
-        </button>
-
-        {/* Screen Share */}
-        <button
-          onClick={toggleScreenShare}
-          className={`btn ${isScreenSharing ? 'btn-primary' : 'btn-secondary'}`}
-          style={{ width: '48px', height: '48px', borderRadius: '50%', padding: 0 }}
-          title="Share Screen"
-        >
-          <Monitor size={20} />
-        </button>
-
-        {/* AI Live Transcribe Toggle */}
-        <button
-          onClick={() => setShowLiveTranscript(!showLiveTranscript)}
-          className={`btn ${showLiveTranscript ? 'btn-primary' : 'btn-secondary'}`}
-          style={{ width: '48px', height: '48px', borderRadius: '50%', padding: 0 }}
-          title="Toggle Live AI Captions"
-        >
-          <Sparkles size={20} color={showLiveTranscript ? '#fff' : '#c084fc'} />
-        </button>
-
-        {/* Raise Hand */}
-        <button
-          onClick={toggleHand}
-          className={`btn ${isHandRaised ? 'btn-primary' : 'btn-secondary'}`}
-          style={{ width: '48px', height: '48px', borderRadius: '50%', padding: 0 }}
-          title="Raise Hand"
-        >
-          <Hand size={20} color={isHandRaised ? '#f59e0b' : '#fff'} />
-        </button>
-
-        {/* Record Meeting */}
-        <button
-          onClick={toggleRecording}
-          className={`btn ${isRecording ? 'btn-danger' : 'btn-secondary'}`}
-          style={{
-            width: '48px',
-            height: '48px',
-            borderRadius: '50%',
-            padding: 0,
-            background: isRecording ? '#ef4444' : undefined,
-            color: '#fff',
-            boxShadow: isRecording ? '0 0 16px rgba(239, 68, 68, 0.6)' : 'none',
-            border: isRecording ? '1px solid #f87171' : '1px solid var(--border-subtle)'
-          }}
-          title={isRecording ? "Stop Recording (Downloads video file)" : "Start Recording"}
-        >
-          <Circle size={18} fill={isRecording ? '#fff' : 'transparent'} color={isRecording ? '#fff' : 'currentColor'} />
-        </button>
-
-        <div style={{ width: '1px', height: '32px', background: 'var(--border-subtle)', margin: '0 4px' }} />
-
-        {/* Drawer Toggles */}
-        <button
-          onClick={() => setActiveTab(activeTab === 'chat' ? null : 'chat')}
-          className={`btn ${activeTab === 'chat' ? 'btn-primary' : 'btn-secondary'}`}
-          style={{ width: '48px', height: '48px', borderRadius: '50%', padding: 0 }}
-          title="In-meeting Chat"
-        >
-          <MessageSquare size={20} />
-        </button>
-
-        <button
-          onClick={() => setActiveTab(activeTab === 'participants' ? null : 'participants')}
-          className={`btn ${activeTab === 'participants' ? 'btn-primary' : 'btn-secondary'}`}
-          style={{ width: '48px', height: '48px', borderRadius: '50%', padding: 0 }}
-          title="Participants List"
-        >
-          <Users size={20} />
-        </button>
-
-        <button
-          onClick={() => setActiveTab(activeTab === 'notes' ? null : 'notes')}
-          className={`btn ${activeTab === 'notes' ? 'btn-primary' : 'btn-secondary'}`}
-          style={{ width: '48px', height: '48px', borderRadius: '50%', padding: 0 }}
-          title="Shared Collaborative Notes"
-        >
-          <Edit3 size={20} />
-        </button>
-
-        <div style={{ width: '1px', height: '32px', background: 'var(--border-subtle)', margin: '0 4px' }} />
-
-        {/* Leave / End Call */}
-        <button
-          onClick={handleLeaveOrEnd}
-          className="btn btn-danger meeting-end-call-btn"
-          style={{ padding: '0 20px', height: '48px', borderRadius: '24px', gap: '8px' }}
-          title="End Call"
-        >
-          <PhoneOff size={18} />
-          <span className="end-call-label">End Call</span>
-        </button>
-
-      </div>
-
+      {/* Recording Management Modal */}
+      <RecordingModal
+        isOpen={recordingModalOpen}
+        onClose={() => setRecordingModalOpen(false)}
+        mode={recordingModalMode}
+        onStartRecording={startRecording}
+        completedRecording={completedRecording}
+        onSaveToHistory={handleSaveRecordingToHistory}
+      />
     </div>
   );
 };

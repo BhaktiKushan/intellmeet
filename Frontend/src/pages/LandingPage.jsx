@@ -1,20 +1,29 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext.jsx';
-import { 
-  Video, 
-  Lock, 
-  Mail, 
-  User as UserIcon, 
-  Eye, 
-  EyeOff, 
+import {
+  Video,
+  Lock,
+  Mail,
+  User as UserIcon,
+  Eye,
+  EyeOff,
   AlertCircle,
   Briefcase,
   ShieldCheck,
-  ArrowRight
+  ArrowRight,
+  Monitor,
+  Circle,
+  Sparkles,
+  Zap,
+  CheckCircle2,
+  Users,
+  Layout,
+  Layers,
+  ChevronRight
 } from 'lucide-react';
 
 export const LandingPage = () => {
-  const { login, register } = useAuth();
+  const { login, register, demoLogin } = useAuth();
   const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -41,181 +50,522 @@ export const LandingPage = () => {
     }
   };
 
-  const handleFillAdmin = () => {
-    setEmail('admin@intellmeet.com');
-    setPassword('Password123!');
+  const handleDemoSignIn = async (role = 'admin') => {
     setError('');
+    setLoading(true);
+    try {
+      await demoLogin(role);
+    } catch (err) {
+      setError(err.message || 'Demo sign-in failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const scrollToAuth = () => {
+    const el = document.getElementById('auth-section');
+    if (el) el.scrollIntoView({ behavior: 'smooth' });
   };
 
   return (
-    <div style={{
-      minHeight: 'calc(100vh - 68px)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: '40px 20px',
-      position: 'relative',
-      zIndex: 1
-    }}>
-      {/* Background ambient decorative glow */}
-      <div style={{
-        position: 'absolute',
-        top: '20%',
-        left: '50%',
-        transform: 'translate(-50%, -20%)',
-        width: '560px',
-        height: '560px',
-        background: 'radial-gradient(circle, rgba(99, 102, 241, 0.12) 0%, rgba(139, 92, 246, 0.05) 45%, transparent 70%)',
-        pointerEvents: 'none',
-        zIndex: 0
-      }} />
-
-      {/* Main Authentication Card */}
-      <div 
-        className="glass-panel"
-        style={{
-          width: '100%',
-          maxWidth: '460px',
-          borderRadius: '24px',
-          padding: '40px 36px',
-          border: '1px solid rgba(99, 102, 241, 0.28)',
-          boxShadow: '0 24px 60px -12px rgba(0, 0, 0, 0.65), 0 0 32px rgba(99, 102, 241, 0.12)',
-          background: 'rgba(14, 21, 36, 0.92)',
-          backdropFilter: 'blur(20px)',
-          position: 'relative',
-          zIndex: 1,
-          textAlign: 'center'
-        }}
-      >
-        {/* Header Branding */}
+    <div style={{ minHeight: 'calc(100vh - 68px)', position: 'relative', overflowX: 'hidden' }}>
+      
+      {/* ---------------- 1. HERO SECTION ---------------- */}
+      <section style={{
+        maxWidth: '1280px',
+        margin: '0 auto',
+        padding: '54px 24px 72px',
+        textAlign: 'center',
+        position: 'relative',
+        zIndex: 1
+      }}>
+        {/* Release Pill */}
         <div style={{
           display: 'inline-flex',
           alignItems: 'center',
-          justifyContent: 'center',
-          width: '56px',
-          height: '56px',
-          borderRadius: '16px',
-          background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-          boxShadow: '0 8px 24px rgba(99, 102, 241, 0.35)',
-          marginBottom: '20px'
+          gap: '8px',
+          padding: '6px 16px',
+          borderRadius: '30px',
+          background: 'rgba(99, 102, 241, 0.15)',
+          border: '1px solid rgba(99, 102, 241, 0.35)',
+          color: '#a5b4fc',
+          fontSize: '0.84rem',
+          fontWeight: 600,
+          marginBottom: '24px'
         }}>
-          <Video size={28} color="#ffffff" />
+          <Sparkles size={15} color="#818cf8" />
+          <span>IntellMeet 2.0 Enterprise Release &bull; Next-Gen WebRTC & AI Intelligence</span>
         </div>
 
+        {/* Hero Headline */}
         <h1 style={{
-          fontSize: '1.65rem',
-          fontWeight: 800,
+          fontSize: 'clamp(2.4rem, 5vw, 4rem)',
+          fontWeight: 900,
+          lineHeight: 1.15,
+          letterSpacing: '-0.03em',
           color: '#ffffff',
-          letterSpacing: '-0.02em',
-          marginBottom: '8px',
-          fontFamily: 'var(--font-heading)'
+          maxWidth: '960px',
+          margin: '0 auto 20px'
         }}>
-          {authMode === 'login' ? 'Sign in to IntellMeet' : 'Create an Account'}
+          Intelligent Video Meetings with <span className="gradient-text">Studio Clarity & AI Synthesis</span>
         </h1>
 
+        {/* Hero Subtitle */}
         <p style={{
-          fontSize: '0.9rem',
+          fontSize: 'clamp(1rem, 2vw, 1.25rem)',
           color: 'var(--text-muted)',
-          lineHeight: 1.5,
-          marginBottom: '28px'
+          maxWidth: '720px',
+          margin: '0 auto 36px',
+          lineHeight: 1.6
         }}>
-          {authMode === 'login'
-            ? 'Access your enterprise video meetings and workspace'
-            : 'Get started with high-definition meetings & AI synthesis'}
+          Ultra-low-latency video conferencing inspired by Google Meet and Zoom. Prominent screen sharing, full multi-track meeting recording, host governance, and real-time AI speech-to-action workflows.
         </p>
 
-        {/* Tab Switcher: Sign In & Create Account */}
+        {/* Hero CTA Action Buttons */}
         <div style={{
           display: 'flex',
-          background: 'rgba(10, 15, 26, 0.85)',
-          padding: '4px',
-          borderRadius: '12px',
-          marginBottom: '28px',
-          border: '1px solid var(--border-subtle)'
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '16px',
+          flexWrap: 'wrap',
+          marginBottom: '54px'
         }}>
           <button
-            type="button"
-            onClick={() => { setAuthMode('login'); setError(''); }}
+            onClick={() => handleDemoSignIn('admin')}
+            className="btn btn-primary"
             style={{
-              flex: 1,
-              padding: '10px 16px',
-              borderRadius: '9px',
-              border: 'none',
-              background: authMode === 'login' ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' : 'transparent',
-              color: authMode === 'login' ? '#ffffff' : 'var(--text-muted)',
-              fontWeight: authMode === 'login' ? 700 : 500,
-              fontSize: '0.9rem',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-              fontFamily: 'var(--font-body)',
-              boxShadow: authMode === 'login' ? '0 4px 14px rgba(99, 102, 241, 0.35)' : 'none'
+              padding: '14px 28px',
+              fontSize: '1rem',
+              fontWeight: 700,
+              borderRadius: '14px',
+              boxShadow: '0 8px 24px rgba(99, 102, 241, 0.45)'
             }}
           >
-            Sign In
+            <Zap size={18} />
+            <span>Launch Instant Demo (Admin)</span>
           </button>
 
           <button
-            type="button"
-            onClick={() => { setAuthMode('register'); setError(''); }}
+            onClick={scrollToAuth}
+            className="btn btn-secondary"
             style={{
-              flex: 1,
-              padding: '10px 16px',
-              borderRadius: '9px',
-              border: 'none',
-              background: authMode === 'register' ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' : 'transparent',
-              color: authMode === 'register' ? '#ffffff' : 'var(--text-muted)',
-              fontWeight: authMode === 'register' ? 700 : 500,
-              fontSize: '0.9rem',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-              fontFamily: 'var(--font-body)',
-              boxShadow: authMode === 'register' ? '0 4px 14px rgba(99, 102, 241, 0.35)' : 'none'
+              padding: '14px 28px',
+              fontSize: '1rem',
+              fontWeight: 600,
+              borderRadius: '14px'
             }}
           >
-            Create Account
+            <span>Sign In / Create Account</span>
+            <ChevronRight size={18} />
           </button>
         </div>
 
-        {/* Error Feedback Banner */}
-        {error && (
+        {/* Hero Interactive Video Room Mockup */}
+        <div style={{
+          maxWidth: '1080px',
+          margin: '0 auto',
+          borderRadius: '24px',
+          overflow: 'hidden',
+          background: '#070a14',
+          border: '1px solid rgba(255, 255, 255, 0.12)',
+          boxShadow: '0 24px 80px rgba(0, 0, 0, 0.8), 0 0 40px rgba(99, 102, 241, 0.2)',
+          position: 'relative'
+        }}>
+          {/* Mockup Top Bar */}
           <div style={{
-            background: 'rgba(239, 68, 68, 0.15)',
-            border: '1px solid rgba(239, 68, 68, 0.4)',
-            color: '#fca5a5',
-            padding: '12px 14px',
-            borderRadius: '10px',
-            marginBottom: '22px',
-            fontSize: '0.88rem',
+            background: 'rgba(10, 15, 26, 0.9)',
+            padding: '12px 20px',
+            borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
             display: 'flex',
             alignItems: 'center',
-            gap: '10px',
-            textAlign: 'left'
+            justifyContent: 'space-between',
+            fontSize: '0.82rem',
+            color: '#a5b4fc'
           }}>
-            <AlertCircle size={18} style={{ flexShrink: 0 }} />
-            <span>{error}</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#ef4444', display: 'inline-block' }} />
+              <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#f59e0b', display: 'inline-block' }} />
+              <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }} />
+              <span style={{ fontWeight: 700, color: '#ffffff', marginLeft: '6px' }}>Sprint 42 Architecture & WebRTC Sync</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ color: '#34d399', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <Zap size={13} />
+                <span>124ms Latency</span>
+              </span>
+              <span style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#f87171', padding: '2px 8px', borderRadius: '10px', fontWeight: 700 }}>
+                REC 18:42
+              </span>
+            </div>
           </div>
-        )}
 
-        {/* Form: Sign In */}
-        {authMode === 'login' ? (
-          <form onSubmit={handleSubmit} style={{ textAlign: 'left' }}>
-            {/* Work Email */}
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{
-                display: 'block',
-                fontSize: '0.85rem',
+          {/* Mockup Meeting Stage: Prominent Screen Share + Side Filmstrip */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) 240px',
+            gap: '12px',
+            padding: '16px',
+            background: '#040711',
+            minHeight: '360px'
+          }}>
+            {/* Center Stage: Screen Share Preview */}
+            <div style={{
+              borderRadius: '16px',
+              overflow: 'hidden',
+              background: '#0a0f1d',
+              border: '1px solid rgba(99, 102, 241, 0.3)',
+              position: 'relative',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '24px'
+            }}>
+              <div style={{
+                position: 'absolute',
+                top: '12px',
+                left: '12px',
+                background: 'rgba(10, 15, 26, 0.85)',
+                padding: '4px 10px',
+                borderRadius: '16px',
+                fontSize: '0.75rem',
+                color: '#ffffff',
                 fontWeight: 600,
-                color: 'var(--text-muted)',
-                marginBottom: '8px'
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                border: '1px solid rgba(99, 102, 241, 0.3)'
               }}>
+                <Monitor size={12} color="#818cf8" />
+                <span>Sarah Chen is presenting: Distributed WebRTC Topology</span>
+              </div>
+
+              {/* Graphical Representation of Screen Share Content */}
+              <div style={{
+                width: '85%',
+                height: '70%',
+                background: 'rgba(15, 23, 42, 0.8)',
+                border: '1px dashed rgba(99, 102, 241, 0.4)',
+                borderRadius: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexDirection: 'column',
+                gap: '12px',
+                padding: '20px'
+              }}>
+                <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+                  <div style={{ padding: '8px 14px', borderRadius: '8px', background: 'rgba(99, 102, 241, 0.25)', color: '#818cf8', fontSize: '0.8rem', fontWeight: 700 }}>
+                    Client Peer A
+                  </div>
+                  <span style={{ color: '#34d399', fontWeight: 800 }}>&harr; WebRTC 120ms &harr;</span>
+                  <div style={{ padding: '8px 14px', borderRadius: '8px', background: 'rgba(16, 185, 129, 0.25)', color: '#34d399', fontSize: '0.8rem', fontWeight: 700 }}>
+                    Client Peer B
+                  </div>
+                </div>
+                <div style={{ fontSize: '0.76rem', color: 'var(--text-dim)' }}>
+                  Screen content is rendered in crisp, high-resolution priority stage with preserved aspect ratio.
+                </div>
+              </div>
+            </div>
+
+            {/* Filmstrip Mockup */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{
+                aspectRatio: '16/9',
+                borderRadius: '12px',
+                background: '#0d1322',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                position: 'relative'
+              }}>
+                <img
+                  src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80"
+                  alt="Alex"
+                  style={{ width: '48px', height: '48px', borderRadius: '50%', objectFit: 'cover' }}
+                />
+                <span style={{ position: 'absolute', bottom: '6px', left: '8px', fontSize: '0.7rem', color: '#fff', background: 'rgba(0,0,0,0.6)', padding: '2px 6px', borderRadius: '8px' }}>
+                  Alex Rivera (Host)
+                </span>
+              </div>
+
+              <div style={{
+                aspectRatio: '16/9',
+                borderRadius: '12px',
+                background: '#0d1322',
+                border: '2px solid #06b6d4',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                position: 'relative',
+                boxShadow: '0 0 16px rgba(6, 182, 212, 0.35)'
+              }}>
+                <img
+                  src="https://images.unsplash.com/photo-1517841905240-472988babdf9?w=100&auto=format&fit=crop&q=80"
+                  alt="Sarah"
+                  style={{ width: '48px', height: '48px', borderRadius: '50%', objectFit: 'cover' }}
+                />
+                <span style={{ position: 'absolute', bottom: '6px', left: '8px', fontSize: '0.7rem', color: '#fff', background: 'rgba(0,0,0,0.6)', padding: '2px 6px', borderRadius: '8px' }}>
+                  Sarah Chen (Speaking)
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ---------------- 2. ENTERPRISE VALUE PILLARS ---------------- */}
+      <section style={{
+        maxWidth: '1200px',
+        margin: '0 auto',
+        padding: '36px 24px 64px',
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+        gap: '24px',
+        position: 'relative',
+        zIndex: 1
+      }}>
+        {/* Pillar 1 */}
+        <div className="glass-panel" style={{ padding: '28px', borderRadius: '20px' }}>
+          <div style={{
+            width: '46px',
+            height: '46px',
+            borderRadius: '14px',
+            background: 'rgba(99, 102, 241, 0.2)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#818cf8',
+            marginBottom: '18px'
+          }}>
+            <Monitor size={24} />
+          </div>
+          <h3 style={{ fontSize: '1.15rem', color: '#ffffff', marginBottom: '8px' }}>
+            Prominent Screen Sharing
+          </h3>
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+            Automated presenter stage layout. Presenter stream takes center stage with preserved aspect ratio, while participants form an organized filmstrip.
+          </p>
+        </div>
+
+        {/* Pillar 2 */}
+        <div className="glass-panel" style={{ padding: '28px', borderRadius: '20px' }}>
+          <div style={{
+            width: '46px',
+            height: '46px',
+            borderRadius: '14px',
+            background: 'rgba(239, 68, 68, 0.2)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#f87171',
+            marginBottom: '18px'
+          }}>
+            <Circle size={22} fill="#ef4444" />
+          </div>
+          <h3 style={{ fontSize: '1.15rem', color: '#ffffff', marginBottom: '8px' }}>
+            Multi-Audio Meeting Recording
+          </h3>
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+            Canvas stage composite or full-desktop capture with Web Audio API multi-mic mixing. Captures your voice and all remote participants with instant playback and download.
+          </p>
+        </div>
+
+        {/* Pillar 3 */}
+        <div className="glass-panel" style={{ padding: '28px', borderRadius: '20px' }}>
+          <div style={{
+            width: '46px',
+            height: '46px',
+            borderRadius: '14px',
+            background: 'rgba(16, 185, 129, 0.2)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#34d399',
+            marginBottom: '18px'
+          }}>
+            <ShieldCheck size={24} />
+          </div>
+          <h3 style={{ fontSize: '1.15rem', color: '#ffffff', marginBottom: '8px' }}>
+            Server-Enforced Host Controls
+          </h3>
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+            Enterprise host roles enforced at the socket level. Host can mute participants, remove disruptive users, lock screen sharing, and manage meeting settings.
+          </p>
+        </div>
+
+        {/* Pillar 4 */}
+        <div className="glass-panel" style={{ padding: '28px', borderRadius: '20px' }}>
+          <div style={{
+            width: '46px',
+            height: '46px',
+            borderRadius: '14px',
+            background: 'rgba(168, 85, 247, 0.2)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#c084fc',
+            marginBottom: '18px'
+          }}>
+            <Sparkles size={24} />
+          </div>
+          <h3 style={{ fontSize: '1.15rem', color: '#ffffff', marginBottom: '8px' }}>
+            AI Synthesis & Kanban Integration
+          </h3>
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+            Real-time speech-to-text captions, automated post-meeting executive summaries, and 1-click conversion of action items into Kanban tasks.
+          </p>
+        </div>
+      </section>
+
+      {/* ---------------- 3. AUTHENTICATION & DEMO LOGIN ---------------- */}
+      <section
+        id="auth-section"
+        style={{
+          maxWidth: '520px',
+          margin: '0 auto 80px',
+          padding: '0 20px',
+          position: 'relative',
+          zIndex: 1
+        }}
+      >
+        <div
+          className="glass-panel"
+          style={{
+            borderRadius: '24px',
+            padding: '36px 32px',
+            border: '1px solid rgba(99, 102, 241, 0.28)',
+            boxShadow: '0 24px 60px rgba(0, 0, 0, 0.65)',
+            background: 'rgba(14, 21, 36, 0.95)',
+            backdropFilter: 'blur(20px)'
+          }}
+        >
+          {/* Quick Demo Login Buttons */}
+          <div style={{ marginBottom: '28px' }}>
+            <span style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-dim)', textTransform: 'uppercase', marginBottom: '10px' }}>
+              Instant Demo Access (One Click):
+            </span>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+              <button
+                type="button"
+                onClick={() => handleDemoSignIn('admin')}
+                className="btn btn-secondary"
+                style={{ padding: '8px 10px', fontSize: '0.8rem', justifyContent: 'flex-start', border: '1px solid rgba(99, 102, 241, 0.3)' }}
+              >
+                <ShieldCheck size={14} color="#818cf8" />
+                <span>Alex (Admin/Host)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDemoSignIn('member')}
+                className="btn btn-secondary"
+                style={{ padding: '8px 10px', fontSize: '0.8rem', justifyContent: 'flex-start', border: '1px solid rgba(16, 185, 129, 0.3)' }}
+              >
+                <UserIcon size={14} color="#34d399" />
+                <span>Sarah (Member)</span>
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '20px 0' }}>
+            <div style={{ flex: 1, height: '1px', background: 'var(--border-subtle)' }} />
+            <span style={{ fontSize: '0.76rem', color: 'var(--text-dim)' }}>OR USE CREDENTIALS</span>
+            <div style={{ flex: 1, height: '1px', background: 'var(--border-subtle)' }} />
+          </div>
+
+          {/* Switcher: Sign In vs Create Account */}
+          <div style={{
+            display: 'flex',
+            background: 'rgba(10, 15, 26, 0.85)',
+            padding: '4px',
+            borderRadius: '12px',
+            marginBottom: '24px',
+            border: '1px solid var(--border-subtle)'
+          }}>
+            <button
+              type="button"
+              onClick={() => { setAuthMode('login'); setError(''); }}
+              style={{
+                flex: 1,
+                padding: '9px 14px',
+                borderRadius: '8px',
+                border: 'none',
+                background: authMode === 'login' ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' : 'transparent',
+                color: authMode === 'login' ? '#ffffff' : 'var(--text-muted)',
+                fontWeight: authMode === 'login' ? 700 : 500,
+                fontSize: '0.88rem',
+                cursor: 'pointer'
+              }}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              onClick={() => { setAuthMode('register'); setError(''); }}
+              style={{
+                flex: 1,
+                padding: '9px 14px',
+                borderRadius: '8px',
+                border: 'none',
+                background: authMode === 'register' ? 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)' : 'transparent',
+                color: authMode === 'register' ? '#ffffff' : 'var(--text-muted)',
+                fontWeight: authMode === 'register' ? 700 : 500,
+                fontSize: '0.88rem',
+                cursor: 'pointer'
+              }}
+            >
+              Create Account
+            </button>
+          </div>
+
+          {error && (
+            <div style={{
+              background: 'rgba(239, 68, 68, 0.15)',
+              border: '1px solid rgba(239, 68, 68, 0.4)',
+              color: '#fca5a5',
+              padding: '10px 14px',
+              borderRadius: '10px',
+              marginBottom: '20px',
+              fontSize: '0.85rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              <AlertCircle size={16} style={{ flexShrink: 0 }} />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {/* Form */}
+          <form onSubmit={handleSubmit}>
+            {authMode === 'register' && (
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>
+                  Full Name
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <UserIcon size={16} color="var(--text-dim)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                  <input
+                    type="text"
+                    required
+                    placeholder="Alex Rivera"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="input-field"
+                    style={{ paddingLeft: '38px' }}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>
                 Work Email
               </label>
               <div style={{ position: 'relative' }}>
-                <Mail 
-                  size={18} 
-                  color="var(--text-dim)" 
-                  style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)' }} 
-                />
+                <Mail size={16} color="var(--text-dim)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
                 <input
                   type="email"
                   required
@@ -223,50 +573,17 @@ export const LandingPage = () => {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="input-field"
-                  style={{
-                    paddingLeft: '44px',
-                    paddingRight: '14px',
-                    paddingTop: '13px',
-                    paddingBottom: '13px',
-                    fontSize: '0.95rem'
-                  }}
+                  style={{ paddingLeft: '38px' }}
                 />
               </div>
             </div>
 
-            {/* Password */}
-            <div style={{ marginBottom: '26px' }}>
-              <div style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: '8px'
-              }}>
-                <label style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)' }}>
-                  Password
-                </label>
-                <button
-                  type="button"
-                  onClick={handleFillAdmin}
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    fontSize: '0.76rem',
-                    color: '#818cf8',
-                    cursor: 'pointer',
-                    fontWeight: 600,
-                    padding: 0
-                  }}
-                >
-                  Fill Admin Creds
-                </button>
-              </div>
+            <div style={{ marginBottom: '22px' }}>
+              <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>
+                Password
+              </label>
               <div style={{ position: 'relative' }}>
-                <Lock 
-                  size={18} 
-                  color="var(--text-dim)" 
-                  style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)' }} 
-                />
+                <Lock size={16} color="var(--text-dim)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
                 <input
                   type={showPassword ? 'text' : 'password'}
                   required
@@ -274,298 +591,45 @@ export const LandingPage = () => {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="input-field"
-                  style={{
-                    paddingLeft: '44px',
-                    paddingRight: '44px',
-                    paddingTop: '13px',
-                    paddingBottom: '13px',
-                    fontSize: '0.95rem'
-                  }}
+                  style={{ paddingLeft: '38px', paddingRight: '38px' }}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
                   style={{
                     position: 'absolute',
-                    right: '12px',
+                    right: '10px',
                     top: '50%',
                     transform: 'translateY(-50%)',
                     background: 'transparent',
                     border: 'none',
                     color: 'var(--text-dim)',
-                    cursor: 'pointer',
-                    padding: '4px',
-                    display: 'flex',
-                    alignItems: 'center'
+                    cursor: 'pointer'
                   }}
                 >
-                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
             </div>
 
-            {/* Submit Button */}
             <button
               type="submit"
               disabled={loading}
               className="btn btn-primary"
               style={{
                 width: '100%',
-                padding: '14px',
-                fontSize: '1rem',
+                padding: '12px',
+                fontSize: '0.96rem',
                 fontWeight: 700,
-                borderRadius: '12px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px'
+                borderRadius: '12px'
               }}
             >
-              <span>{loading ? 'Authenticating...' : 'Sign In to Workspace'}</span>
-              {!loading && <ArrowRight size={18} />}
+              <span>{loading ? 'Authenticating...' : authMode === 'login' ? 'Sign In to Workspace' : 'Create Enterprise Account'}</span>
+              {!loading && <ArrowRight size={16} />}
             </button>
-
-            {/* Switch to Register */}
-            <div style={{
-              textAlign: 'center',
-              marginTop: '22px',
-              fontSize: '0.85rem',
-              color: 'var(--text-dim)'
-            }}>
-              Don't have an enterprise account?{' '}
-              <button
-                type="button"
-                onClick={() => { setAuthMode('register'); setError(''); }}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#818cf8',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  fontSize: '0.85rem',
-                  padding: 0
-                }}
-              >
-                Create one now
-              </button>
-            </div>
           </form>
-        ) : (
-          /* Form: Create Account */
-          <form onSubmit={handleSubmit} style={{ textAlign: 'left' }}>
-            {/* Full Name */}
-            <div style={{ marginBottom: '18px' }}>
-              <label style={{
-                display: 'block',
-                fontSize: '0.85rem',
-                fontWeight: 600,
-                color: 'var(--text-muted)',
-                marginBottom: '8px'
-              }}>
-                Full Name
-              </label>
-              <div style={{ position: 'relative' }}>
-                <UserIcon 
-                  size={18} 
-                  color="var(--text-dim)" 
-                  style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)' }} 
-                />
-                <input
-                  type="text"
-                  required
-                  placeholder="Alex Rivera"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="input-field"
-                  style={{
-                    paddingLeft: '44px',
-                    paddingRight: '14px',
-                    paddingTop: '13px',
-                    paddingBottom: '13px',
-                    fontSize: '0.95rem'
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Work Email */}
-            <div style={{ marginBottom: '18px' }}>
-              <label style={{
-                display: 'block',
-                fontSize: '0.85rem',
-                fontWeight: 600,
-                color: 'var(--text-muted)',
-                marginBottom: '8px'
-              }}>
-                Work Email
-              </label>
-              <div style={{ position: 'relative' }}>
-                <Mail 
-                  size={18} 
-                  color="var(--text-dim)" 
-                  style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)' }} 
-                />
-                <input
-                  type="email"
-                  required
-                  placeholder="alex@company.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="input-field"
-                  style={{
-                    paddingLeft: '44px',
-                    paddingRight: '14px',
-                    paddingTop: '13px',
-                    paddingBottom: '13px',
-                    fontSize: '0.95rem'
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Password */}
-            <div style={{ marginBottom: '18px' }}>
-              <label style={{
-                display: 'block',
-                fontSize: '0.85rem',
-                fontWeight: 600,
-                color: 'var(--text-muted)',
-                marginBottom: '8px'
-              }}>
-                Password
-              </label>
-              <div style={{ position: 'relative' }}>
-                <Lock 
-                  size={18} 
-                  color="var(--text-dim)" 
-                  style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)' }} 
-                />
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  required
-                  placeholder="Create a strong password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="input-field"
-                  style={{
-                    paddingLeft: '44px',
-                    paddingRight: '44px',
-                    paddingTop: '13px',
-                    paddingBottom: '13px',
-                    fontSize: '0.95rem'
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  style={{
-                    position: 'absolute',
-                    right: '12px',
-                    top: '50%',
-                    transform: 'translateY(-50%)',
-                    background: 'transparent',
-                    border: 'none',
-                    color: 'var(--text-dim)',
-                    cursor: 'pointer',
-                    padding: '4px',
-                    display: 'flex',
-                    alignItems: 'center'
-                  }}
-                >
-                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
-              </div>
-            </div>
-
-            {/* Department */}
-            <div style={{ marginBottom: '26px' }}>
-              <label style={{
-                display: 'block',
-                fontSize: '0.85rem',
-                fontWeight: 600,
-                color: 'var(--text-muted)',
-                marginBottom: '8px'
-              }}>
-                Department
-              </label>
-              <div style={{ position: 'relative' }}>
-                <Briefcase 
-                  size={18} 
-                  color="var(--text-dim)" 
-                  style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)' }} 
-                />
-                <select
-                  value={department}
-                  onChange={(e) => setDepartment(e.target.value)}
-                  className="input-field"
-                  style={{
-                    paddingLeft: '44px',
-                    paddingRight: '14px',
-                    paddingTop: '13px',
-                    paddingBottom: '13px',
-                    fontSize: '0.95rem',
-                    cursor: 'pointer',
-                    appearance: 'auto'
-                  }}
-                >
-                  <option value="Engineering">Engineering & DevOps</option>
-                  <option value="Product">Product & Design</option>
-                  <option value="Architecture">Cloud Architecture</option>
-                  <option value="Executive">Executive Leadership</option>
-                </select>
-              </div>
-            </div>
-
-            {/* Submit Button */}
-            <button
-              type="submit"
-              disabled={loading}
-              className="btn btn-primary"
-              style={{
-                width: '100%',
-                padding: '14px',
-                fontSize: '1rem',
-                fontWeight: 700,
-                borderRadius: '12px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px'
-              }}
-            >
-              <span>{loading ? 'Creating Account...' : 'Create Account & Join'}</span>
-              {!loading && <ArrowRight size={18} />}
-            </button>
-
-            {/* Switch to Sign In */}
-            <div style={{
-              textAlign: 'center',
-              marginTop: '22px',
-              fontSize: '0.85rem',
-              color: 'var(--text-dim)'
-            }}>
-              Already have an enterprise account?{' '}
-              <button
-                type="button"
-                onClick={() => { setAuthMode('login'); setError(''); }}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#818cf8',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  fontSize: '0.85rem',
-                  padding: 0
-                }}
-              >
-                Sign in
-              </button>
-            </div>
-          </form>
-        )}
-      </div>
+        </div>
+      </section>
     </div>
   );
 };

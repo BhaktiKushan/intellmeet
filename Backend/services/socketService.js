@@ -1,8 +1,8 @@
 import Meeting from '../models/Meeting.js';
 
 export const setupSocketIO = (io) => {
-  // Store active rooms in-memory for instant lookups
-  const rooms = new Map(); // roomId -> Map(socketId -> userData)
+  // Store active rooms in-memory: roomId -> { users: Map, hostSocketId, presenter, settings, recording }
+  const rooms = new Map();
 
   io.on('connection', (socket) => {
     console.log(`[Socket] Client connected: ${socket.id}`);
@@ -12,31 +12,77 @@ export const setupSocketIO = (io) => {
       socket.join(roomId);
 
       if (!rooms.has(roomId)) {
-        rooms.set(roomId, new Map());
+        rooms.set(roomId, {
+          users: new Map(),
+          hostSocketId: socket.id,
+          presenter: null,
+          settings: {
+            allowScreenShare: true,
+            muteOnJoin: false
+          },
+          recording: {
+            isRecording: false,
+            recordedBy: null
+          }
+        });
       }
 
-      const roomUsers = rooms.get(roomId);
+      const room = rooms.get(roomId);
+      const roomUsers = room.users;
+
+      // Determine if user is host from DB or first in room
+      let isHost = false;
+      try {
+        const meeting = await Meeting.findOne({ code: roomId });
+        if (meeting && user?._id) {
+          isHost = meeting.host.toString() === user._id.toString();
+          if (meeting.settings) {
+            room.settings.allowScreenShare = meeting.settings.allowScreenShare !== false;
+            room.settings.muteOnJoin = !!meeting.settings.muteOnJoin;
+          }
+        }
+      } catch (err) {
+        console.warn('[Socket] Meeting lookup note:', err.message);
+      }
+
+      // If user is designated host or first user in empty room
+      if (isHost || roomUsers.size === 0) {
+        room.hostSocketId = socket.id;
+        isHost = true;
+      }
+
       const participantData = {
         socketId: socket.id,
         id: user?._id || user?.id || socket.id,
         name: user?.name || `Guest-${socket.id.slice(0, 4)}`,
         avatar: user?.avatar || '',
-        role: user?.role || 'participant',
-        isAudioMuted: false,
+        role: isHost ? 'host' : (user?.role || 'participant'),
+        isAudioMuted: room.settings.muteOnJoin && !isHost,
         isVideoOff: false,
-        isHandRaised: false
+        isHandRaised: false,
+        isSpeaking: false,
+        joinedAt: new Date().toISOString()
       };
 
       roomUsers.set(socket.id, participantData);
       socket.roomId = roomId;
+      socket.userRole = participantData.role;
 
-      // Send existing participants in the room to the new user
+      // Send existing participants & room state to the new user
       const existingParticipants = Array.from(roomUsers.values()).filter(p => p.socketId !== socket.id);
       socket.emit('all-users', existingParticipants);
 
+      // Send initial room state (presenter, host, recording, settings)
+      socket.emit('room-state', {
+        hostSocketId: room.hostSocketId,
+        presenter: room.presenter,
+        recording: room.recording,
+        settings: room.settings
+      });
+
       // Notify other participants in the room
       socket.to(roomId).emit('user-connected', participantData);
-      console.log(`[Socket] User ${participantData.name} (${socket.id}) joined room: ${roomId}`);
+      console.log(`[Socket] User ${participantData.name} (${socket.id}, role: ${participantData.role}) joined room: ${roomId}`);
 
       // Try updating meeting in database if it exists
       try {
@@ -49,9 +95,13 @@ export const setupSocketIO = (io) => {
               name: participantData.name,
               email: user.email || '',
               avatar: participantData.avatar,
-              role: meeting.host.toString() === user._id.toString() ? 'host' : 'participant',
+              role: isHost ? 'host' : 'participant',
               joinedAt: new Date()
             });
+            if (meeting.status === 'scheduled') {
+              meeting.status = 'live';
+              meeting.startedAt = meeting.startedAt || new Date();
+            }
             await meeting.save();
           }
         }
@@ -86,9 +136,9 @@ export const setupSocketIO = (io) => {
 
     // Media Controls: Audio / Video toggle
     socket.on('toggle-media', ({ roomId, type, enabled }) => {
-      const roomUsers = rooms.get(roomId);
-      if (roomUsers && roomUsers.has(socket.id)) {
-        const user = roomUsers.get(socket.id);
+      const room = rooms.get(roomId);
+      if (room && room.users.has(socket.id)) {
+        const user = room.users.get(socket.id);
         if (type === 'audio') user.isAudioMuted = !enabled;
         if (type === 'video') user.isVideoOff = !enabled;
       }
@@ -101,15 +151,188 @@ export const setupSocketIO = (io) => {
 
     // Hand raise toggle
     socket.on('toggle-hand', ({ roomId, raised }) => {
-      const roomUsers = rooms.get(roomId);
-      if (roomUsers && roomUsers.has(socket.id)) {
-        const user = roomUsers.get(socket.id);
+      const room = rooms.get(roomId);
+      if (room && room.users.has(socket.id)) {
+        const user = room.users.get(socket.id);
         user.isHandRaised = raised;
       }
       io.to(roomId).emit('user-hand-toggled', {
         socketId: socket.id,
         raised
       });
+    });
+
+    // Active Speaker detection toggle
+    socket.on('speaking-state', ({ roomId, isSpeaking }) => {
+      const room = rooms.get(roomId);
+      if (room && room.users.has(socket.id)) {
+        const user = room.users.get(socket.id);
+        user.isSpeaking = isSpeaking;
+      }
+      socket.to(roomId).emit('user-speaking', {
+        socketId: socket.id,
+        isSpeaking
+      });
+    });
+
+    // Screen Sharing: Start presentation
+    socket.on('start-screen-share', ({ roomId }) => {
+      const room = rooms.get(roomId);
+      if (!room) return;
+
+      const user = room.users.get(socket.id);
+      const isHost = socket.id === room.hostSocketId || user?.role === 'host';
+
+      // Enforce host permissions on screen sharing
+      if (!room.settings.allowScreenShare && !isHost) {
+        socket.emit('screen-share-denied', { message: 'Screen sharing has been disabled by the meeting host.' });
+        return;
+      }
+
+      room.presenter = {
+        socketId: socket.id,
+        name: user?.name || 'Participant'
+      };
+
+      io.to(roomId).emit('screen-share-started', {
+        socketId: socket.id,
+        name: room.presenter.name
+      });
+      console.log(`[Socket] Screen share started by ${room.presenter.name} (${socket.id}) in ${roomId}`);
+    });
+
+    // Screen Sharing: Stop presentation
+    socket.on('stop-screen-share', ({ roomId }) => {
+      const room = rooms.get(roomId);
+      if (room && room.presenter && room.presenter.socketId === socket.id) {
+        room.presenter = null;
+        io.to(roomId).emit('screen-share-stopped', {
+          socketId: socket.id
+        });
+        console.log(`[Socket] Screen share stopped in ${roomId}`);
+      }
+    });
+
+    // Host Controls: Mute a specific participant
+    socket.on('host-mute-user', ({ roomId, targetSocketId }) => {
+      const room = rooms.get(roomId);
+      if (!room) return;
+
+      const sender = room.users.get(socket.id);
+      const isAuthorizedHost = socket.id === room.hostSocketId || sender?.role === 'host';
+
+      if (!isAuthorizedHost) {
+        socket.emit('host-action-error', { message: 'Permission denied. Only the meeting host can mute participants.' });
+        return;
+      }
+
+      if (room.users.has(targetSocketId)) {
+        const target = room.users.get(targetSocketId);
+        target.isAudioMuted = true;
+
+        // Command the target client to mute audio track
+        io.to(targetSocketId).emit('force-mute', { by: sender?.name || 'Host' });
+        // Broadcast to all participants
+        io.to(roomId).emit('user-media-toggled', {
+          socketId: targetSocketId,
+          type: 'audio',
+          enabled: false
+        });
+        console.log(`[Socket] Host ${socket.id} muted participant ${targetSocketId} in ${roomId}`);
+      }
+    });
+
+    // Host Controls: Mute ALL participants
+    socket.on('host-mute-all', ({ roomId }) => {
+      const room = rooms.get(roomId);
+      if (!room) return;
+
+      const sender = room.users.get(socket.id);
+      const isAuthorizedHost = socket.id === room.hostSocketId || sender?.role === 'host';
+
+      if (!isAuthorizedHost) {
+        socket.emit('host-action-error', { message: 'Permission denied. Only host can mute all participants.' });
+        return;
+      }
+
+      room.users.forEach((u, sId) => {
+        if (sId !== socket.id) {
+          u.isAudioMuted = true;
+          io.to(sId).emit('force-mute', { by: sender?.name || 'Host' });
+          io.to(roomId).emit('user-media-toggled', {
+            socketId: sId,
+            type: 'audio',
+            enabled: false
+          });
+        }
+      });
+      console.log(`[Socket] Host ${socket.id} muted all in ${roomId}`);
+    });
+
+    // Host Controls: Remove / Kick a participant
+    socket.on('host-kick-user', ({ roomId, targetSocketId }) => {
+      const room = rooms.get(roomId);
+      if (!room) return;
+
+      const sender = room.users.get(socket.id);
+      const isAuthorizedHost = socket.id === room.hostSocketId || sender?.role === 'host';
+
+      if (!isAuthorizedHost) {
+        socket.emit('host-action-error', { message: 'Permission denied. Only the host can remove participants.' });
+        return;
+      }
+
+      if (room.users.has(targetSocketId)) {
+        const target = room.users.get(targetSocketId);
+        room.users.delete(targetSocketId);
+
+        // Tell target they were removed
+        io.to(targetSocketId).emit('kicked-from-meeting', {
+          reason: 'You were removed from the meeting by the host.'
+        });
+
+        // Notify room
+        io.to(roomId).emit('user-disconnected', {
+          socketId: targetSocketId,
+          participant: target,
+          reason: 'kicked'
+        });
+        console.log(`[Socket] Host ${socket.id} removed participant ${targetSocketId} from ${roomId}`);
+      }
+    });
+
+    // Host Controls: Toggle Room Screen Share Permission
+    socket.on('host-toggle-screen-share-permission', ({ roomId, allowScreenShare }) => {
+      const room = rooms.get(roomId);
+      if (!room) return;
+
+      const sender = room.users.get(socket.id);
+      const isAuthorizedHost = socket.id === room.hostSocketId || sender?.role === 'host';
+
+      if (!isAuthorizedHost) {
+        socket.emit('host-action-error', { message: 'Permission denied. Host only.' });
+        return;
+      }
+
+      room.settings.allowScreenShare = !!allowScreenShare;
+      io.to(roomId).emit('meeting-settings-updated', room.settings);
+      console.log(`[Socket] Screen share permission in ${roomId} set to: ${allowScreenShare}`);
+    });
+
+    // Recording status sync
+    socket.on('recording-status', ({ roomId, isRecording, mode }) => {
+      const room = rooms.get(roomId);
+      if (!room) return;
+
+      const user = room.users.get(socket.id);
+      room.recording = {
+        isRecording: !!isRecording,
+        recordedBy: isRecording ? (user?.name || 'A participant') : null,
+        mode: mode || 'composite'
+      };
+
+      io.to(roomId).emit('recording-status-changed', room.recording);
+      console.log(`[Socket] Recording status in ${roomId}:`, room.recording);
     });
 
     // In-Meeting Chat
@@ -200,9 +423,29 @@ export const setupSocketIO = (io) => {
   const handleDisconnect = (socket) => {
     const roomId = socket.roomId;
     if (roomId && rooms.has(roomId)) {
-      const roomUsers = rooms.get(roomId);
+      const room = rooms.get(roomId);
+      const roomUsers = room.users;
       const participant = roomUsers.get(socket.id);
       roomUsers.delete(socket.id);
+
+      // If disconnected user was presenter, clear presenter & notify room
+      if (room.presenter && room.presenter.socketId === socket.id) {
+        room.presenter = null;
+        io.to(roomId).emit('screen-share-stopped', { socketId: socket.id });
+      }
+
+      // If disconnected user was host, reassign host if participants remain
+      if (room.hostSocketId === socket.id && roomUsers.size > 0) {
+        const nextHost = roomUsers.values().next().value;
+        if (nextHost) {
+          room.hostSocketId = nextHost.socketId;
+          nextHost.role = 'host';
+          io.to(roomId).emit('host-changed', {
+            newHostSocketId: nextHost.socketId,
+            newHostName: nextHost.name
+          });
+        }
+      }
 
       io.to(roomId).emit('user-disconnected', {
         socketId: socket.id,
@@ -216,3 +459,4 @@ export const setupSocketIO = (io) => {
     }
   };
 };
+

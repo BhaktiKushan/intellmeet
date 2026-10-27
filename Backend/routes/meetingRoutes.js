@@ -297,4 +297,32 @@ router.post('/:id/action-items/:itemId/task', protect, async (req, res, next) =>
   }
 });
 
+// Save Meeting Recording URL and Status
+router.post('/:id/recording', protect, async (req, res, next) => {
+  try {
+    const isObjectId = /^[0-9a-fA-F]{24}$/.test(req.params.id);
+    const query = isObjectId ? { _id: req.params.id } : { code: req.params.id };
+    const meeting = await Meeting.findOne(query);
+
+    if (!meeting) {
+      return res.status(404).json({ success: false, message: 'Meeting not found' });
+    }
+
+    const { recordingUrl, durationMinutes } = req.body;
+    meeting.isRecorded = true;
+    if (recordingUrl) meeting.recordingUrl = recordingUrl;
+    if (durationMinutes) meeting.durationMinutes = durationMinutes;
+
+    await meeting.save();
+
+    res.json({
+      success: true,
+      message: 'Recording details saved successfully',
+      data: meeting
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;

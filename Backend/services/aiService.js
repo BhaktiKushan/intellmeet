@@ -48,10 +48,11 @@ Return ONLY a valid JSON object matching this schema:
   ]
 }`;
 
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${geminiKey}`;
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`;
       const res = await fetch(geminiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(4000),
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: { responseMimeType: 'application/json' }
@@ -96,6 +97,7 @@ Return ONLY a valid JSON object matching this schema:
           'Content-Type': 'application/json',
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`
         },
+        signal: AbortSignal.timeout(4000),
         body: JSON.stringify({
           model: 'gpt-4o-mini',
           messages: [

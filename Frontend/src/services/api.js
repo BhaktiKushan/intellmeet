@@ -1,5 +1,6 @@
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || '';
-const API_BASE = `${BACKEND_URL}/api`;
+const rawBackend = import.meta.env.VITE_BACKEND_URL || '';
+const BACKEND_URL = rawBackend.trim().replace(/\/$/, '');
+const API_BASE = BACKEND_URL ? `${BACKEND_URL}/api` : '/api';
 
 const getHeaders = () => {
   const token = localStorage.getItem('intellmeet_token');
@@ -101,6 +102,15 @@ export const api = {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify({ transcript })
+    });
+    return handleResponse(res);
+  },
+
+  saveRecording: async (meetingId, recordingData) => {
+    const res = await fetch(`${API_BASE}/meetings/${meetingId}/recording`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify(recordingData)
     });
     return handleResponse(res);
   },

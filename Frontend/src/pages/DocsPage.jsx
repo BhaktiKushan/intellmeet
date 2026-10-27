@@ -213,6 +213,50 @@ export const DocsPage = () => {
           </div>
         </section>
 
+        {/* SECTION 5: WEBRTC SCALABILITY SPECIFICATION (MESH VS SFU) */}
+        <section style={{ marginBottom: '44px' }}>
+          <h2 style={{ fontSize: '1.4rem', color: '#fff', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px', marginBottom: '16px' }}>
+            5. WebRTC Scalability Specification & Media Architecture
+          </h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '18px', marginBottom: '18px' }}>
+            <div style={{ padding: '18px', background: 'rgba(99, 102, 241, 0.08)', borderRadius: '12px', border: '1px solid rgba(99, 102, 241, 0.25)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                <Zap size={18} color="#818cf8" />
+                <h4 style={{ color: '#ffffff', fontSize: '1rem', fontWeight: 700 }}>Peer-to-Peer Mesh (Current Topology)</h4>
+              </div>
+              <p style={{ fontSize: '0.84rem', color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: '10px' }}>
+                Direct client-to-client encrypted streaming with zero media server egress cost and ultra-low latency (&lt;125ms).
+              </p>
+              <ul style={{ paddingLeft: '18px', fontSize: '0.8rem', color: '#cbd5e1', lineHeight: 1.6 }}>
+                <li><strong>Optimal Capacity:</strong> 1 to 8 concurrent participants.</li>
+                <li><strong>Connection Formula:</strong> <code>N * (N - 1) / 2</code> peer connections.</li>
+                <li><strong>Bandwidth:</strong> At 720p 30fps (1.2 Mbps), 4 participants require ~3.6 Mbps uplink.</li>
+                <li><strong>Screen Sharing:</strong> Seamless <code>replaceTrack()</code> allows instant presentation priority without renegotiation.</li>
+              </ul>
+            </div>
+
+            <div style={{ padding: '18px', background: 'rgba(16, 185, 129, 0.08)', borderRadius: '12px', border: '1px solid rgba(16, 185, 129, 0.25)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                <Server size={18} color="#34d399" />
+                <h4 style={{ color: '#ffffff', fontSize: '1rem', fontWeight: 700 }}>Selective Forwarding Unit (SFU) Roadmap</h4>
+              </div>
+              <p style={{ fontSize: '0.84rem', color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: '10px' }}>
+                Scalable architecture for large enterprise auditoriums, webinars, and all-hands meetings (50 to 500+ participants).
+              </p>
+              <ul style={{ paddingLeft: '18px', fontSize: '0.8rem', color: '#cbd5e1', lineHeight: 1.6 }}>
+                <li><strong>Recommended SFU Stack:</strong> LiveKit, mediasoup, or Janus Gateway.</li>
+                <li><strong>Bandwidth Optimization:</strong> Each participant sends only 1 uplink stream to the SFU regardless of meeting size.</li>
+                <li><strong>Simulcast:</strong> Publishes high (1080p), medium (720p), and low (360p) streams; SFU forwards appropriate layer based on client bandwidth and viewport size.</li>
+                <li><strong>Server-Side Recording:</strong> Headless Chromium / GStreamer compositing pipeline.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div style={{ padding: '16px', background: 'rgba(255, 255, 255, 0.03)', borderRadius: '12px', border: '1px solid var(--border-subtle)', fontSize: '0.84rem', color: '#cbd5e1' }}>
+            <strong>Dual-Mode Recording Architecture:</strong> IntellMeet provides both (1) <em>Meeting Canvas Composite Recording</em> which captures the active presenter stage and uses the Web Audio API to mix all local and remote participant voices with zero audio feedback; and (2) <em>Full Screen / Desktop Capture</em> which prompts the user for system/tab audio and mixes it with the conference audio tracks for complete documentation.
+          </div>
+        </section>
+
         {/* SECTION 6: 28-DAY EXECUTION TIMELINE */}
         <section style={{ marginBottom: '44px' }}>
           <h2 style={{ fontSize: '1.4rem', color: '#fff', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px', marginBottom: '16px' }}>

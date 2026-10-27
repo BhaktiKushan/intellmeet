@@ -24,10 +24,16 @@ export const DashboardPage = ({ onJoinMeeting, onViewMeetingDetails, onNavigateT
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [meetingCodeInput, setMeetingCodeInput] = useState('');
-  const [filter, setFilter] = useState('all'); // 'all' | 'live' | 'scheduled' | 'ended'
+  const [filter, setFilter] = useState('all'); // 'all' | 'live' | 'scheduled' | 'ended' | 'recordings'
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [newMeetingTitle, setNewMeetingTitle] = useState('');
   const [newMeetingDesc, setNewMeetingDesc] = useState('');
+  const [playbackRecording, setPlaybackRecording] = useState(null);
+  const [scheduleSettings, setScheduleSettings] = useState({
+    allowScreenShare: true,
+    muteOnJoin: false,
+    aiTranscriptionEnabled: true
+  });
 
   const loadDashboardData = async () => {
     try {
@@ -67,7 +73,8 @@ export const DashboardPage = ({ onJoinMeeting, onViewMeetingDetails, onNavigateT
     try {
       const res = await api.createMeeting({
         title: newMeetingTitle || 'Engineering Standup',
-        description: newMeetingDesc
+        description: newMeetingDesc,
+        settings: scheduleSettings
       });
       setShowScheduleModal(false);
       setNewMeetingTitle('');
@@ -86,6 +93,7 @@ export const DashboardPage = ({ onJoinMeeting, onViewMeetingDetails, onNavigateT
 
   const filteredMeetings = meetings.filter(m => {
     if (filter === 'all') return true;
+    if (filter === 'recordings') return m.isRecorded || !!m.recordingUrl;
     return m.status === filter;
   });
 
@@ -325,12 +333,13 @@ export const DashboardPage = ({ onJoinMeeting, onViewMeetingDetails, onNavigateT
           </div>
 
           {/* Filter Pills */}
-          <div style={{ display: 'flex', gap: '8px', background: 'rgba(15, 23, 42, 0.6)', padding: '4px', borderRadius: '8px' }}>
+          <div style={{ display: 'flex', gap: '8px', background: 'rgba(15, 23, 42, 0.6)', padding: '4px', borderRadius: '8px', flexWrap: 'wrap' }}>
             {[
               { id: 'all', label: 'All' },
               { id: 'live', label: 'Live Now' },
               { id: 'scheduled', label: 'Scheduled' },
-              { id: 'ended', label: 'Past & Summarized' }
+              { id: 'ended', label: 'Past & Summarized' },
+              { id: 'recordings', label: 'Recordings Available' }
             ].map(tab => (
               <button
                 key={tab.id}
@@ -386,12 +395,40 @@ export const DashboardPage = ({ onJoinMeeting, onViewMeetingDetails, onNavigateT
                 }}
               >
                 <div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-                    <span className={`badge ${
-                      meeting.status === 'live' ? 'badge-live' : meeting.status === 'scheduled' ? 'badge-scheduled' : 'badge-ended'
-                    }`}>
-                      {meeting.status}
-                    </span>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px', gap: '8px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span className={`badge ${
+                        meeting.status === 'live' ? 'badge-live' : meeting.status === 'scheduled' ? 'badge-scheduled' : 'badge-ended'
+                      }`}>
+                        {meeting.status}
+                      </span>
+                      {(meeting.isRecorded || meeting.recordingUrl) && (
+                        <button
+                          onClick={() => setPlaybackRecording({
+                            title: meeting.title,
+                            code: meeting.code,
+                            url: meeting.recordingUrl || 'demo-recording',
+                            duration: meeting.durationMinutes || 15
+                          })}
+                          style={{
+                            background: 'rgba(239, 68, 68, 0.15)',
+                            border: '1px solid rgba(239, 68, 68, 0.35)',
+                            color: '#f87171',
+                            borderRadius: '12px',
+                            padding: '2px 8px',
+                            fontSize: '0.72rem',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                        >
+                          <Circle size={8} fill="#ef4444" color="#ef4444" />
+                          <span>Watch Recording</span>
+                        </button>
+                      )}
+                    </div>
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>
                       Code: <code style={{ color: '#a5b4fc', fontWeight: 600 }}>{meeting.code}</code>
                     </span>
@@ -517,15 +554,15 @@ export const DashboardPage = ({ onJoinMeeting, onViewMeetingDetails, onNavigateT
           zIndex: 100,
           padding: '20px'
         }}>
-          <div className="glass-panel" style={{ width: '100%', maxWidth: '480px', padding: '28px', borderRadius: '18px' }}>
-            <h3 style={{ fontSize: '1.25rem', color: '#fff', marginBottom: '8px' }}>
+          <div className="glass-panel" style={{ width: '100%', maxWidth: '520px', padding: '32px', borderRadius: '20px' }}>
+            <h3 style={{ fontSize: '1.35rem', color: '#fff', marginBottom: '8px' }}>
               Schedule Enterprise Meeting
             </h3>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '20px' }}>
-              Reserve a secure room with automatic transcription and action items extraction.
+              Configure a secure WebRTC room with server-enforced governance and AI transcription.
             </p>
 
-            <form onSubmit={handleScheduleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <form onSubmit={handleScheduleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>
                   Meeting Topic / Title
@@ -554,6 +591,37 @@ export const DashboardPage = ({ onJoinMeeting, onViewMeetingDetails, onNavigateT
                 />
               </div>
 
+              {/* Governance & Media Settings */}
+              <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '14px', borderRadius: '12px', border: '1px solid var(--border-subtle)' }}>
+                <span style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: '#a5b4fc', marginBottom: '8px' }}>
+                  MEETING PERMISSIONS & GOVERNANCE:
+                </span>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', color: '#ffffff', cursor: 'pointer', marginBottom: '8px' }}>
+                  <input
+                    type="checkbox"
+                    checked={scheduleSettings.allowScreenShare}
+                    onChange={(e) => setScheduleSettings(s => ({ ...s, allowScreenShare: e.target.checked }))}
+                  />
+                  <span>Allow participants to share their screens</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', color: '#ffffff', cursor: 'pointer', marginBottom: '8px' }}>
+                  <input
+                    type="checkbox"
+                    checked={scheduleSettings.muteOnJoin}
+                    onChange={(e) => setScheduleSettings(s => ({ ...s, muteOnJoin: e.target.checked }))}
+                  />
+                  <span>Mute participants automatically upon joining</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', color: '#ffffff', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={scheduleSettings.aiTranscriptionEnabled}
+                    onChange={(e) => setScheduleSettings(s => ({ ...s, aiTranscriptionEnabled: e.target.checked }))}
+                  />
+                  <span>Enable AI live speech-to-text and automated summary</span>
+                </label>
+              </div>
+
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
                 <button
                   type="button"
@@ -571,6 +639,63 @@ export const DashboardPage = ({ onJoinMeeting, onViewMeetingDetails, onNavigateT
         </div>
       )}
 
+      {/* Recording Playback Modal */}
+      {playbackRecording && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(4, 7, 15, 0.85)',
+          backdropFilter: 'blur(16px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 100,
+          padding: '20px'
+        }}>
+          <div className="glass-panel" style={{ width: '100%', maxWidth: '640px', padding: '28px', borderRadius: '20px', background: 'rgba(14, 21, 36, 0.98)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+              <div>
+                <h3 style={{ fontSize: '1.25rem', color: '#fff', fontWeight: 800 }}>
+                  {playbackRecording.title}
+                </h3>
+                <span style={{ fontSize: '0.8rem', color: '#818cf8' }}>
+                  Meeting Code: {playbackRecording.code} &bull; {playbackRecording.duration} mins recorded
+                </span>
+              </div>
+              <button
+                onClick={() => setPlaybackRecording(null)}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', fontSize: '1.2rem' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ width: '100%', aspectRatio: '16/9', borderRadius: '14px', overflow: 'hidden', background: '#050811', border: '1px solid rgba(255, 255, 255, 0.1)', marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {playbackRecording.url && playbackRecording.url.startsWith('blob:') ? (
+                <video src={playbackRecording.url} controls playsInline style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+              ) : (
+                <div style={{ textAlign: 'center', padding: '24px' }}>
+                  <Video size={48} color="#818cf8" style={{ margin: '0 auto 12px' }} />
+                  <div style={{ color: '#fff', fontWeight: 700, fontSize: '1.05rem', marginBottom: '6px' }}>
+                    Multi-Track Recorded Session
+                  </div>
+                  <p style={{ color: 'var(--text-dim)', fontSize: '0.82rem' }}>
+                    This session contains captured video composition and synchronized audio tracks.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button onClick={() => setPlaybackRecording(null)} className="btn btn-secondary">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
+
