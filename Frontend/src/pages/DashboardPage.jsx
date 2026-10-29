@@ -1,51 +1,60 @@
 import React, { useState, useEffect } from 'react';
-import { api } from '../services/api.js';
 import { useAuth } from '../context/AuthContext.jsx';
-import { 
-  Video, 
-  Plus, 
-  Calendar, 
-  ArrowRight, 
-  Clock, 
-  Users, 
-  Sparkles, 
-  CheckCircle2, 
-  TrendingUp, 
-  ShieldCheck, 
-  ExternalLink,
-  Radio,
+import { api } from '../services/api.js';
+import {
+  Video,
+  Plus,
+  Users,
+  Calendar,
+  Clock,
+  Sparkles,
+  ArrowRight,
+  Copy,
+  Check,
+  CheckCircle2,
   FileText,
-  Search,
-  Zap
+  KanbanSquare,
+  Shield,
+  Activity,
+  Layers,
+  TrendingUp,
+  Radio,
+  ExternalLink
 } from 'lucide-react';
 
-export const DashboardPage = ({ onJoinMeeting, onViewMeetingDetails, onNavigateTab }) => {
+export const DashboardPage = ({
+  onJoinMeeting,
+  onViewMeetingDetails,
+  onNavigateTab
+}) => {
   const { user } = useAuth();
   const [meetings, setMeetings] = useState([]);
-  const [analytics, setAnalytics] = useState(null);
+  const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [meetingCodeInput, setMeetingCodeInput] = useState('');
-  const [filter, setFilter] = useState('all'); // 'all' | 'live' | 'scheduled' | 'ended' | 'recordings'
+  const [joinCode, setJoinCode] = useState('');
+  const [creatingInstant, setCreatingInstant] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
-  const [newMeetingTitle, setNewMeetingTitle] = useState('');
-  const [newMeetingDesc, setNewMeetingDesc] = useState('');
-  const [playbackRecording, setPlaybackRecording] = useState(null);
-  const [scheduleSettings, setScheduleSettings] = useState({
-    allowScreenShare: true,
-    muteOnJoin: false,
-    aiTranscriptionEnabled: true
-  });
+  const [scheduleTitle, setScheduleTitle] = useState('');
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleTime, setScheduleTime] = useState('');
+  const [scheduleDesc, setScheduleDesc] = useState('');
+  const [copiedCode, setCopiedCode] = useState('');
 
   const loadDashboardData = async () => {
     try {
-      const [meetingsRes, analyticsRes] = await Promise.all([
+      const [meetingsRes, tasksRes] = await Promise.allSettled([
         api.getMeetings(),
-        api.getDashboardAnalytics()
+        api.getTasks()
       ]);
-      setMeetings(meetingsRes.data || []);
-      setAnalytics(analyticsRes.data || null);
+
+      if (meetingsRes.status === 'fulfilled' && meetingsRes.value.data) {
+        setMeetings(meetingsRes.value.data);
+      }
+      if (tasksRes.status === 'fulfilled' && tasksRes.value.data) {
+        setTasks(tasksRes.value.data);
+      }
     } catch (err) {
-      console.error('Error fetching dashboard data:', err);
+      console.error('Dashboard load error:', err);
     } finally {
       setLoading(false);
     }
@@ -55,529 +64,660 @@ export const DashboardPage = ({ onJoinMeeting, onViewMeetingDetails, onNavigateT
     loadDashboardData();
   }, []);
 
-  const handleCreateInstant = async () => {
+  // Quick Action 1: Instant Meeting
+  const handleStartInstantMeeting = async () => {
+    setCreatingInstant(true);
     try {
+      const randomCode = `meet-${Math.random().toString(36).substring(2, 6)}-${Math.random().toString(36).substring(2, 6)}`;
       const res = await api.createMeeting({
         title: `${user?.name?.split(' ')[0] || 'Team'}'s Instant Meeting`,
-        description: 'Instant ad-hoc collaboration room'
+        description: 'Instant collaboration session created from Dashboard.',
+        code: randomCode,
+        status: 'live',
+        scheduledAt: new Date()
       });
-      if (res.data && res.data.code) {
-        onJoinMeeting(res.data.code);
-      }
+      const meetingCode = res.data?.code || randomCode;
+      onJoinMeeting(meetingCode);
     } catch (err) {
       alert('Failed to create instant meeting: ' + err.message);
+    } finally {
+      setCreatingInstant(false);
     }
   };
 
-  const handleScheduleSubmit = async (e) => {
+  // Quick Action 2: Join by Room Code
+  const handleJoinByCode = (e) => {
     e.preventDefault();
+    const cleanCode = joinCode.trim();
+    if (!cleanCode) return;
+    onJoinMeeting(cleanCode);
+  };
+
+  // Quick Action 3: Schedule New Meeting
+  const handleScheduleMeeting = async (e) => {
+    e.preventDefault();
+    if (!scheduleTitle.trim()) return;
+
     try {
-      const res = await api.createMeeting({
-        title: newMeetingTitle || 'Engineering Standup',
-        description: newMeetingDesc,
-        settings: scheduleSettings
+      const randomCode = `meet-${Math.random().toString(36).substring(2, 6)}-${Math.random().toString(36).substring(2, 6)}`;
+      const scheduleDateTime = scheduleDate && scheduleTime
+        ? new Date(`${scheduleDate}T${scheduleTime}`)
+        : new Date(Date.now() + 3600000);
+
+      await api.createMeeting({
+        title: scheduleTitle.trim(),
+        description: scheduleDesc.trim() || 'Scheduled enterprise meeting.',
+        code: randomCode,
+        status: 'scheduled',
+        scheduledAt: scheduleDateTime
       });
+
       setShowScheduleModal(false);
-      setNewMeetingTitle('');
-      setNewMeetingDesc('');
+      setScheduleTitle('');
+      setScheduleDate('');
+      setScheduleTime('');
+      setScheduleDesc('');
       loadDashboardData();
     } catch (err) {
       alert('Failed to schedule meeting: ' + err.message);
     }
   };
 
-  const handleJoinByCode = (e) => {
-    e.preventDefault();
-    if (!meetingCodeInput.trim()) return;
-    onJoinMeeting(meetingCodeInput.trim());
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text);
+    setCopiedCode(text);
+    setTimeout(() => setCopiedCode(''), 2500);
   };
 
-  const filteredMeetings = meetings.filter(m => {
-    if (filter === 'all') return true;
-    if (filter === 'recordings') return m.isRecorded || !!m.recordingUrl;
-    return m.status === filter;
-  });
-
-  const liveMeetings = meetings.filter(m => m.status === 'live');
+  // Calculations for Overview Statistics
+  const totalMeetings = meetings.length;
+  const completedMeetings = meetings.filter(m => m.status === 'ended');
+  const summarizedMeetings = completedMeetings.filter(m => m.summary && m.summary.trim().length > 0);
+  const scheduledMeetings = meetings.filter(m => m.status === 'scheduled');
+  const recentMeetings = [...meetings].sort((a, b) => new Date(b.createdAt || b.scheduledAt) - new Date(a.createdAt || a.scheduledAt)).slice(0, 4);
+  const hoursSaved = Math.max(1, Math.round(summarizedMeetings.length * 0.75 * 10) / 10);
+  const openTasks = tasks.filter(t => t.status !== 'done');
 
   return (
-    <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '32px 24px 64px' }}>
+    <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '32px 24px 80px' }}>
       
-      {/* Welcome Banner */}
+      {/* 1. WORKSPACE COMMAND HEADER */}
       <div style={{
         display: 'flex',
         flexWrap: 'wrap',
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: '20px',
-        marginBottom: '28px'
+        marginBottom: '32px'
       }}>
         <div>
-          <h1 style={{ fontSize: '2rem', fontWeight: 800, color: '#0f172a', marginBottom: '6px' }}>
-            Welcome back, <span className="gradient-text">{user?.name || 'Engineer'}</span> 👋
-          </h1>
-          <p style={{ color: '#64748b', fontSize: '0.95rem' }}>
-            {user?.title || 'Enterprise Team Lead'} &nbsp;•&nbsp; {user?.department || 'Product & Engineering'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+            <h1 style={{ fontSize: '2rem', fontWeight: 800, color: '#fff', letterSpacing: '-0.02em', margin: 0 }}>
+              Welcome back, <span className="gradient-text">{user?.name?.split(' ')[0] || 'Leader'}</span> 👋
+            </h1>
+            <span style={{
+              fontSize: '0.75rem',
+              fontWeight: 700,
+              padding: '3px 10px',
+              borderRadius: '20px',
+              background: 'rgba(99, 102, 241, 0.2)',
+              color: '#a5b4fc',
+              border: '1px solid rgba(99, 102, 241, 0.4)'
+            }}>
+              {user?.role === 'admin' ? 'Workspace Admin' : 'Active Member'}
+            </span>
+          </div>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.92rem', margin: 0 }}>
+            Here is your enterprise workspace overview, recent meetings, and AI meeting intelligence.
           </p>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontSize: '0.8rem',
+            color: '#34d399',
+            background: 'rgba(16, 185, 129, 0.1)',
+            border: '1px solid rgba(16, 185, 129, 0.25)',
+            padding: '6px 14px',
+            borderRadius: '20px'
+          }}>
+            <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981' }} />
+            AI Engine Operational
+          </span>
         </div>
       </div>
 
-      {/* Prominent Action Hub: Create Meeting & Join Meeting (Requirement 3) */}
-      <div 
-        className="glass-panel"
-        style={{
-          background: '#ffffff',
-          border: '1px solid #e2e8f0',
-          borderRadius: '16px',
-          padding: '24px 28px',
-          marginBottom: '32px',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05)',
+      {/* 2. PROMINENT HERO ACTION BAR: CREATE & JOIN CONTROLS */}
+      <div className="glass-panel" style={{
+        padding: '24px 28px',
+        borderRadius: '20px',
+        marginBottom: '36px',
+        background: 'linear-gradient(135deg, rgba(18, 26, 44, 0.85) 0%, rgba(14, 21, 36, 0.95) 100%)',
+        border: '1px solid rgba(99, 102, 241, 0.25)',
+        boxShadow: '0 12px 30px -10px rgba(0, 0, 0, 0.5)'
+      }}>
+        <div style={{
           display: 'flex',
           flexWrap: 'wrap',
           alignItems: 'center',
           justifyContent: 'space-between',
           gap: '20px'
-        }}
-      >
-        <div style={{ maxWidth: '440px' }}>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#0f172a', marginBottom: '4px' }}>
-            Start or Join a Video Meeting
-          </h2>
-          <p style={{ color: '#64748b', fontSize: '0.9rem', margin: 0 }}>
-            Launch a real-time room with AI synthesis or enter a meeting code to connect with your team.
-          </p>
-        </div>
-
-        <div style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          gap: '12px'
         }}>
-          {/* Prominent Create Meeting Button */}
-          <button
-            onClick={handleCreateInstant}
-            className="btn btn-primary"
+          {/* Quick Action Buttons */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '14px' }}>
+            <button
+              onClick={handleStartInstantMeeting}
+              disabled={creatingInstant}
+              className="btn btn-primary"
+              style={{
+                padding: '13px 24px',
+                fontSize: '0.98rem',
+                fontWeight: 700,
+                borderRadius: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px'
+              }}
+            >
+              <Video size={20} />
+              <span>{creatingInstant ? 'Starting Call...' : 'Create Instant Meeting'}</span>
+            </button>
+
+            <button
+              onClick={() => setShowScheduleModal(true)}
+              className="btn btn-secondary"
+              style={{
+                padding: '13px 22px',
+                fontSize: '0.95rem',
+                fontWeight: 600,
+                borderRadius: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+            >
+              <Calendar size={18} color="#818cf8" />
+              <span>Schedule Meeting</span>
+            </button>
+          </div>
+
+          {/* Join Meeting by Code Input Bar */}
+          <form 
+            onSubmit={handleJoinByCode}
             style={{
-              padding: '11px 22px',
-              fontSize: '0.95rem',
-              fontWeight: 600,
-              borderRadius: '10px',
-              boxShadow: '0 4px 14px rgba(79, 70, 229, 0.25)',
-              display: 'inline-flex',
+              display: 'flex',
               alignItems: 'center',
-              gap: '8px'
+              gap: '10px',
+              maxWidth: '380px',
+              width: '100%'
             }}
           >
-            <Video size={18} />
-            <span>Create Meeting</span>
-          </button>
-
-          {/* Prominent Join Meeting Form & Button */}
-          <form onSubmit={handleJoinByCode} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <input
               type="text"
-              placeholder="Enter meeting code..."
-              value={meetingCodeInput}
-              onChange={(e) => setMeetingCodeInput(e.target.value)}
+              placeholder="Enter meeting code (e.g. meet-arch-9921)"
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value)}
               className="input-field"
               style={{
-                padding: '10px 14px',
-                fontSize: '0.92rem',
-                borderRadius: '10px',
-                border: '1px solid #cbd5e1',
-                width: '220px'
+                padding: '12px 16px',
+                borderRadius: '12px',
+                fontSize: '0.9rem',
+                background: 'rgba(8, 12, 20, 0.7)'
               }}
             />
             <button
               type="submit"
+              disabled={!joinCode.trim()}
               className="btn btn-secondary"
               style={{
-                padding: '10px 18px',
-                fontSize: '0.92rem',
+                padding: '12px 20px',
+                borderRadius: '12px',
+                fontSize: '0.9rem',
                 fontWeight: 600,
-                borderRadius: '10px',
-                whiteSpace: 'nowrap'
+                whiteSpace: 'nowrap',
+                background: joinCode.trim() ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                color: joinCode.trim() ? '#a5b4fc' : 'var(--text-dim)',
+                borderColor: joinCode.trim() ? 'rgba(99, 102, 241, 0.4)' : 'var(--border-subtle)'
               }}
             >
-              Join Meeting
+              Join Call
             </button>
           </form>
         </div>
       </div>
 
-      {/* Live Meeting Alert Callout if any */}
-      {liveMeetings.length > 0 && (
-        <div 
-          className="glass-panel"
-          style={{
-            background: '#fef2f2',
-            border: '1px solid #fecaca',
-            padding: '16px 24px',
-            borderRadius: '14px',
-            marginBottom: '32px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '16px'
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-            <span className="badge badge-live" style={{ padding: '6px 12px' }}>
-              Meeting in Progress
-            </span>
-            <div>
-              <h4 style={{ fontSize: '1.05rem', color: '#0f172a', marginBottom: '2px' }}>
-                {liveMeetings[0].title}
-              </h4>
-              <p style={{ fontSize: '0.82rem', color: '#64748b', margin: 0 }}>
-                Code: <code style={{ color: '#4f46e5', fontWeight: 600, background: '#fee2e2', padding: '2px 6px', borderRadius: '4px' }}>{liveMeetings[0].code}</code> &nbsp;•&nbsp; Ready for instant peer connection
-              </p>
-            </div>
-          </div>
-          <button 
-            onClick={() => onJoinMeeting(liveMeetings[0].code)}
-            className="btn btn-primary"
-            style={{ boxShadow: '0 4px 12px rgba(239, 68, 68, 0.35)', background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)' }}
-          >
-            <Radio size={16} />
-            <span>Join Active Call</span>
-          </button>
-        </div>
-      )}
-
-      {/* Quick Launch Cards */}
+      {/* 3. WORKSPACE METRICS OVERVIEW CARDS */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
         gap: '20px',
         marginBottom: '36px'
       }}>
-        {/* Instant Meeting Launcher */}
-        <div 
-          onClick={handleCreateInstant}
-          className="glass-panel"
-          style={{
-            padding: '24px',
-            cursor: 'pointer',
-            borderRadius: '16px',
-            background: '#ffffff',
-            border: '1px solid #e2e8f0',
-            transition: 'all 0.2s',
-            boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.05)'
-          }}
-        >
-          <div style={{
-            width: '46px',
-            height: '46px',
-            borderRadius: '12px',
-            background: 'linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            marginBottom: '14px',
-            boxShadow: '0 4px 12px rgba(79, 70, 229, 0.25)'
-          }}>
-            <Video size={24} color="#fff" />
+        {/* Metric 1 */}
+        <div className="glass-panel" style={{ padding: '22px 24px', borderRadius: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>Total Meetings</span>
+            <div style={{
+              width: '38px',
+              height: '38px',
+              borderRadius: '10px',
+              background: 'rgba(99, 102, 241, 0.15)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <Video size={18} color="#818cf8" />
+            </div>
           </div>
-          <h3 style={{ fontSize: '1.15rem', color: '#0f172a', marginBottom: '4px' }}>
-            New Instant Meeting
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: '#64748b', lineHeight: 1.5, margin: 0 }}>
-            Generate a secure WebRTC room and start conferring immediately with live transcription.
-          </p>
+          <div style={{ fontSize: '1.9rem', fontWeight: 800, color: '#fff', marginBottom: '4px' }}>
+            {totalMeetings}
+          </div>
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
+            Across all team channels
+          </div>
         </div>
 
-        {/* Schedule Meeting Launcher */}
-        <div 
-          onClick={() => setShowScheduleModal(true)}
-          className="glass-panel"
-          style={{
-            padding: '24px',
-            cursor: 'pointer',
-            borderRadius: '16px',
-            background: '#ffffff',
-            border: '1px solid #e2e8f0',
-            transition: 'all 0.2s',
-            boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.05)'
-          }}
-        >
-          <div style={{
-            width: '46px',
-            height: '46px',
-            borderRadius: '12px',
-            background: 'rgba(2, 132, 199, 0.1)',
-            border: '1px solid rgba(2, 132, 199, 0.2)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            marginBottom: '14px'
-          }}>
-            <Calendar size={22} color="#0284c7" />
+        {/* Metric 2 */}
+        <div className="glass-panel" style={{ padding: '22px 24px', borderRadius: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>Hours Saved by AI</span>
+            <div style={{
+              width: '38px',
+              height: '38px',
+              borderRadius: '10px',
+              background: 'rgba(168, 85, 247, 0.15)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <Sparkles size={18} color="#c084fc" />
+            </div>
           </div>
-          <h3 style={{ fontSize: '1.15rem', color: '#0f172a', marginBottom: '4px' }}>
-            Schedule Meeting
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: '#64748b', lineHeight: 1.5, margin: 0 }}>
-            Plan upcoming design syncs, sprint planning, and client architecture reviews.
-          </p>
+          <div style={{ fontSize: '1.9rem', fontWeight: 800, color: '#fff', marginBottom: '4px' }}>
+            {hoursSaved} hrs
+          </div>
+          <div style={{ fontSize: '0.78rem', color: '#34d399', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <TrendingUp size={12} />
+            Auto-summarization & action items
+          </div>
         </div>
 
-        {/* View Kanban Board */}
-        <div 
-          onClick={() => onNavigateTab('kanban')}
-          className="glass-panel"
-          style={{
-            padding: '24px',
-            cursor: 'pointer',
-            borderRadius: '16px',
-            background: '#ffffff',
-            border: '1px solid #e2e8f0',
-            transition: 'all 0.2s',
-            boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.05)'
-          }}
-        >
-          <div style={{
-            width: '46px',
-            height: '46px',
-            borderRadius: '12px',
-            background: 'rgba(5, 150, 105, 0.1)',
-            border: '1px solid rgba(5, 150, 105, 0.2)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            marginBottom: '14px'
-          }}>
-            <CheckCircle2 size={22} color="#059669" />
+        {/* Metric 3 */}
+        <div className="glass-panel" style={{ padding: '22px 24px', borderRadius: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>AI Summaries Ready</span>
+            <div style={{
+              width: '38px',
+              height: '38px',
+              borderRadius: '10px',
+              background: 'rgba(16, 185, 129, 0.15)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <FileText size={18} color="#34d399" />
+            </div>
           </div>
-          <h3 style={{ fontSize: '1.15rem', color: '#0f172a', marginBottom: '4px' }}>
-            Team Kanban Board
-          </h3>
-          <p style={{ fontSize: '0.85rem', color: '#64748b', lineHeight: 1.5, margin: 0 }}>
-            Manage tasks and action items auto-extracted from past meetings.
-          </p>
+          <div style={{ fontSize: '1.9rem', fontWeight: 800, color: '#fff', marginBottom: '4px' }}>
+            {summarizedMeetings.length}
+          </div>
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
+            From {completedMeetings.length} completed calls
+          </div>
+        </div>
+
+        {/* Metric 4 */}
+        <div className="glass-panel" style={{ padding: '22px 24px', borderRadius: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 600 }}>Active Kanban Tasks</span>
+            <div style={{
+              width: '38px',
+              height: '38px',
+              borderRadius: '10px',
+              background: 'rgba(245, 158, 11, 0.15)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <KanbanSquare size={18} color="#fbbf24" />
+            </div>
+          </div>
+          <div style={{ fontSize: '1.9rem', fontWeight: 800, color: '#fff', marginBottom: '4px' }}>
+            {openTasks.length}
+          </div>
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>
+            Sprint action items assigned
+          </div>
         </div>
       </div>
 
-      {/* Analytics KPI Highlights */}
-      {analytics && (
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-          gap: '16px',
-          marginBottom: '40px'
-        }}>
-          {[
-            { label: 'Total Meetings', val: analytics.metrics?.totalMeetings || 0, icon: Video, color: '#4f46e5' },
-            { label: 'Follow-Up Time Saved', val: '52%', sub: `${analytics.metrics?.hoursSavedByAI || 0} hrs saved`, icon: Clock, color: '#0284c7' },
-            { label: 'Kanban Tasks Closed', val: `${analytics.metrics?.completedTasks || 0} / ${analytics.metrics?.totalTasks || 0}`, sub: `${analytics.metrics?.taskCompletionRate || 0}% completion`, icon: CheckCircle2, color: '#059669' },
-            { label: 'AI Meeting Intelligence', val: 'Operational', sub: 'Whisper + NLP Engine', icon: Sparkles, color: '#7c3aed' }
-          ].map((item, idx) => {
-            const Icon = item.icon;
-            return (
-              <div
-                key={idx}
-                className="glass-panel"
+      {/* 4. MAIN DASHBOARD CONTENT: 2 COLUMNS */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0, 1.6fr) minmax(0, 1fr)',
+        gap: '28px',
+        alignItems: 'start'
+      }}>
+        
+        {/* LEFT COLUMN: RECENT MEETINGS & UPCOMING SESSIONS */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
+          
+          {/* Section: Recent Meetings */}
+          <div className="glass-panel" style={{ padding: '28px', borderRadius: '18px' }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: '20px'
+            }}>
+              <div>
+                <h3 style={{ fontSize: '1.25rem', color: '#fff', fontWeight: 700, margin: 0 }}>
+                  Recent Meetings
+                </h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '4px 0 0' }}>
+                  Latest sessions hosted or recorded in your workspace
+                </p>
+              </div>
+
+              <button
+                onClick={() => onNavigateTab('meetings')}
+                className="btn btn-secondary"
                 style={{
-                  padding: '20px',
-                  borderRadius: '14px',
-                  background: '#ffffff',
-                  border: '1px solid #e2e8f0',
-                  boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.05)'
+                  fontSize: '0.82rem',
+                  padding: '6px 14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-                  <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#64748b' }}>{item.label}</span>
-                  <div style={{
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '8px',
-                    background: `${item.color}15`,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}>
-                    <Icon size={16} color={item.color} />
-                  </div>
-                </div>
-                <div style={{ fontSize: '1.6rem', fontWeight: 800, color: '#0f172a' }}>
-                  {item.val}
-                </div>
-                {item.sub && (
-                  <div style={{ fontSize: '0.75rem', color: '#64748b', marginTop: '4px' }}>
-                    {item.sub}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
+                <span>View All Meetings</span>
+                <ArrowRight size={14} />
+              </button>
+            </div>
 
-      {/* Meetings List / Table Section */}
-      <div 
-        className="glass-panel"
-        style={{
-          background: '#ffffff',
-          borderRadius: '18px',
-          border: '1px solid #e2e8f0',
-          padding: '28px',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05)'
-        }}
-      >
-        {/* Section Header & Filters */}
-        <div style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '16px',
-          marginBottom: '24px'
-        }}>
-          <div>
-            <h2 style={{ fontSize: '1.35rem', fontWeight: 800, color: '#0f172a', marginBottom: '4px' }}>
-              Your Enterprise Meetings
-            </h2>
-            <p style={{ fontSize: '0.85rem', color: '#64748b', margin: 0 }}>
-              Live sessions, scheduled team reviews, and recorded sessions with AI summaries
+            {recentMeetings.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-dim)' }}>
+                <Video size={36} color="var(--text-dim)" style={{ margin: '0 auto 12px' }} />
+                <p style={{ fontSize: '0.9rem', margin: 0 }}>No meetings recorded yet.</p>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Click "Create Instant Meeting" above to start your first session.</p>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                {recentMeetings.map((m) => {
+                  const isEnded = m.status === 'ended';
+                  const isLive = m.status === 'live';
+                  const hasSummary = Boolean(m.summary && m.summary.trim().length > 0);
+
+                  return (
+                    <div
+                      key={m._id || m.code}
+                      style={{
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '14px',
+                        padding: '16px 20px',
+                        borderRadius: '12px',
+                        background: 'rgba(14, 21, 36, 0.7)',
+                        border: '1px solid var(--border-subtle)',
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: '220px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                          <span className={`badge badge-${m.status || 'scheduled'}`}>
+                            {m.status?.toUpperCase() || 'SCHEDULED'}
+                          </span>
+                          <h4 style={{ fontSize: '0.98rem', fontWeight: 700, color: '#fff', margin: 0 }}>
+                            {m.title}
+                          </h4>
+                        </div>
+
+                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <Calendar size={12} color="#818cf8" />
+                            {new Date(m.scheduledAt || m.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                          </span>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <Clock size={12} color="#818cf8" />
+                            {m.durationMinutes || 1}m
+                          </span>
+                          <span style={{ color: 'var(--text-dim)', fontFamily: 'monospace' }}>
+                            {m.code}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        {isEnded ? (
+                          <button
+                            onClick={() => onViewMeetingDetails(m._id || m.code)}
+                            className="btn btn-secondary"
+                            style={{
+                              fontSize: '0.82rem',
+                              padding: '7px 14px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              background: hasSummary ? 'rgba(99, 102, 241, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                              borderColor: hasSummary ? 'rgba(99, 102, 241, 0.35)' : 'var(--border-subtle)',
+                              color: hasSummary ? '#a5b4fc' : 'var(--text-main)'
+                            }}
+                          >
+                            <Sparkles size={14} color="#818cf8" />
+                            <span>View AI Summary</span>
+                          </button>
+                        ) : isLive ? (
+                          <button
+                            onClick={() => onJoinMeeting(m.code)}
+                            className="btn btn-primary"
+                            style={{
+                              fontSize: '0.82rem',
+                              padding: '7px 14px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px'
+                            }}
+                          >
+                            <Video size={14} />
+                            <span>Join Now</span>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => onJoinMeeting(m.code)}
+                            className="btn btn-secondary"
+                            style={{ fontSize: '0.82rem', padding: '7px 14px' }}
+                          >
+                            Start Session
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Section: Scheduled Sessions */}
+          {scheduledMeetings.length > 0 && (
+            <div className="glass-panel" style={{ padding: '24px 28px', borderRadius: '18px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+                <Calendar size={18} color="#818cf8" />
+                <h3 style={{ fontSize: '1.15rem', color: '#fff', fontWeight: 700, margin: 0 }}>
+                  Upcoming Scheduled Sessions ({scheduledMeetings.length})
+                </h3>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {scheduledMeetings.slice(0, 3).map(m => (
+                  <div
+                    key={m._id || m.code}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '12px 16px',
+                      borderRadius: '10px',
+                      background: 'rgba(14, 21, 36, 0.5)',
+                      border: '1px solid var(--border-subtle)'
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 600, color: '#fff', fontSize: '0.9rem' }}>{m.title}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        {new Date(m.scheduledAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => onJoinMeeting(m.code)}
+                      className="btn btn-secondary"
+                      style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                    >
+                      Start Call
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+        </div>
+
+        {/* RIGHT COLUMN: ACTION ITEMS & WORKSPACE SHORTCUTS */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          
+          {/* Recent Action Items Widget */}
+          <div className="glass-panel" style={{ padding: '24px', borderRadius: '18px' }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: '16px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <CheckCircle2 size={18} color="#34d399" />
+                <h3 style={{ fontSize: '1.1rem', color: '#fff', fontWeight: 700, margin: 0 }}>
+                  Action Items
+                </h3>
+              </div>
+              <button
+                onClick={() => onNavigateTab('kanban')}
+                className="btn btn-secondary"
+                style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+              >
+                Sprint Board &rarr;
+              </button>
+            </div>
+
+            {openTasks.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '28px 10px', color: 'var(--text-dim)', fontSize: '0.85rem' }}>
+                All action items are complete! Extracted meeting tasks will appear here.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {openTasks.slice(0, 4).map(task => (
+                  <div
+                    key={task._id}
+                    style={{
+                      padding: '12px 14px',
+                      borderRadius: '8px',
+                      background: 'rgba(14, 21, 36, 0.6)',
+                      border: '1px solid var(--border-subtle)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <span className={`badge badge-priority-${task.priority || 'medium'}`} style={{ fontSize: '0.68rem', padding: '1px 6px' }}>
+                        {task.priority?.toUpperCase()}
+                      </span>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
+                        {task.assigneeName || 'Assigned'}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.85rem', color: 'var(--text-main)', margin: 0, fontWeight: 500, lineHeight: 1.4 }}>
+                      {task.title}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Quick Share Personal Meeting Room */}
+          <div className="glass-panel" style={{ padding: '24px', borderRadius: '18px' }}>
+            <h3 style={{ fontSize: '1.05rem', color: '#fff', fontWeight: 700, marginBottom: '8px' }}>
+              Your Personal Meeting Space
+            </h3>
+            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '16px', lineHeight: 1.4 }}>
+              Share your permanent room code with team members for instant calls anytime.
+            </p>
+
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '10px 14px',
+              borderRadius: '10px',
+              background: 'rgba(8, 12, 20, 0.7)',
+              border: '1px solid var(--border-subtle)',
+              marginBottom: '12px'
+            }}>
+              <span style={{ fontFamily: 'monospace', fontSize: '0.88rem', color: '#a5b4fc', fontWeight: 600 }}>
+                {`meet-${user?._id?.slice(-8) || 'team-space'}`}
+              </span>
+              <button
+                onClick={() => copyToClipboard(`meet-${user?._id?.slice(-8) || 'team-space'}`)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: copiedCode ? '#34d399' : 'var(--text-muted)',
+                  cursor: 'pointer',
+                  padding: '4px'
+                }}
+                title="Copy code"
+              >
+                {copiedCode ? <Check size={16} /> : <Copy size={16} />}
+              </button>
+            </div>
+
+            <button
+              onClick={() => onJoinMeeting(`meet-${user?._id?.slice(-8) || 'team-space'}`)}
+              className="btn btn-secondary"
+              style={{ width: '100%', fontSize: '0.85rem', padding: '9px' }}
+            >
+              Enter Personal Room
+            </button>
+          </div>
+
+          {/* AI Intelligence Engine Status */}
+          <div className="glass-panel" style={{ padding: '20px', borderRadius: '18px', background: 'rgba(99, 102, 241, 0.06)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+              <Sparkles size={16} color="#818cf8" />
+              <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#fff' }}>
+                Google Gemini AI Intelligence
+              </span>
+            </div>
+            <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
+              Transcripts and in-meeting speech are analyzed automatically at the conclusion of every session to extract key takeaways, decisions, and action deliverables.
             </p>
           </div>
 
-          {/* Filter Pills */}
-          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-            {[
-              { id: 'all', label: 'All Meetings' },
-              { id: 'live', label: 'Live Now' },
-              { id: 'scheduled', label: 'Scheduled' },
-              { id: 'ended', label: 'Ended / Past' },
-              { id: 'recordings', label: 'Recordings' }
-            ].map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setFilter(tab.id)}
-                style={{
-                  padding: '7px 14px',
-                  borderRadius: '20px',
-                  border: filter === tab.id ? '1px solid #c7d2fe' : '1px solid #e2e8f0',
-                  background: filter === tab.id ? '#eef2ff' : '#ffffff',
-                  color: filter === tab.id ? '#4f46e5' : '#64748b',
-                  fontSize: '0.82rem',
-                  fontWeight: filter === tab.id ? 700 : 500,
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease'
-                }}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
         </div>
 
-        {/* Meeting Cards Grid */}
-        {loading ? (
-          <div style={{ textAlign: 'center', padding: '48px', color: '#64748b' }}>
-            Loading meetings from cloud...
-          </div>
-        ) : filteredMeetings.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '48px', color: '#64748b' }}>
-            <Video size={40} color="#cbd5e1" style={{ margin: '0 auto 12px' }} />
-            <p style={{ fontWeight: 600, color: '#0f172a', marginBottom: '4px' }}>No meetings found</p>
-            <p style={{ fontSize: '0.85rem', color: '#64748b' }}>Create a meeting or schedule one to get started.</p>
-          </div>
-        ) : (
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-            gap: '16px'
-          }}>
-            {filteredMeetings.map(meeting => (
-              <div
-                key={meeting._id || meeting.code}
-                style={{
-                  background: '#f8fafc',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: '14px',
-                  padding: '20px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                  gap: '16px',
-                  transition: 'border-color 0.15s ease'
-                }}
-              >
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
-                    <span className={`badge badge-${meeting.status}`}>
-                      {meeting.status}
-                    </span>
-                    <span style={{ fontSize: '0.78rem', color: '#4f46e5', fontWeight: 700, fontFamily: 'monospace' }}>
-                      {meeting.code}
-                    </span>
-                  </div>
-
-                  <h3 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0f172a', marginBottom: '6px' }}>
-                    {meeting.title}
-                  </h3>
-
-                  {meeting.description && (
-                    <p style={{ fontSize: '0.82rem', color: '#64748b', lineHeight: 1.4, marginBottom: '10px' }}>
-                      {meeting.description}
-                    </p>
-                  )}
-
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem', color: '#64748b' }}>
-                    <Users size={13} />
-                    <span>
-                      {(meeting.participants || []).length || 1} participant{((meeting.participants || []).length || 1) > 1 ? 's' : ''}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Card Action */}
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  paddingTop: '12px',
-                  borderTop: '1px solid #e2e8f0'
-                }}>
-                  <div style={{ fontSize: '0.75rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    <Clock size={13} />
-                    <span>{new Date(meeting.scheduledAt || meeting.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>
-                  </div>
-
-                  {meeting.status === 'ended' || Boolean(meeting.summary) ? (
-                    <button
-                      onClick={() => onViewMeetingDetails(meeting.code || meeting._id)}
-                      className="btn btn-secondary"
-                      style={{ padding: '6px 12px', fontSize: '0.8rem', borderRadius: '8px' }}
-                    >
-                      <Sparkles size={14} color="#4f46e5" />
-                      <span>View AI Summary</span>
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => onJoinMeeting(meeting.code)}
-                      className="btn btn-primary"
-                      style={{ padding: '6px 14px', fontSize: '0.8rem', borderRadius: '8px' }}
-                    >
-                      <Video size={14} />
-                      <span>Join Room</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
-      {/* Schedule Meeting Modal */}
+      {/* 5. SCHEDULE MEETING MODAL */}
       {showScheduleModal && (
         <div style={{
           position: 'fixed',
           inset: 0,
-          background: 'rgba(15, 23, 42, 0.5)',
+          background: 'rgba(0, 0, 0, 0.75)',
           backdropFilter: 'blur(8px)',
           display: 'flex',
           alignItems: 'center',
@@ -585,144 +725,81 @@ export const DashboardPage = ({ onJoinMeeting, onViewMeetingDetails, onNavigateT
           zIndex: 100,
           padding: '20px'
         }}>
-          <div className="glass-panel" style={{ width: '100%', maxWidth: '520px', padding: '32px', borderRadius: '20px', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)' }}>
-            <h3 style={{ fontSize: '1.35rem', color: '#0f172a', fontWeight: 700, marginBottom: '6px' }}>
-              Schedule Enterprise Meeting
+          <div className="glass-panel" style={{ width: '100%', maxWidth: '480px', padding: '28px', borderRadius: '18px' }}>
+            <h3 style={{ fontSize: '1.25rem', color: '#fff', fontWeight: 700, marginBottom: '6px' }}>
+              Schedule Upcoming Meeting
             </h3>
-            <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '20px' }}>
-              Configure a secure WebRTC room with server-enforced governance and AI transcription.
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '20px' }}>
+              Plan a future collaboration session with automated AI transcription and summary.
             </p>
 
-            <form onSubmit={handleScheduleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <form onSubmit={handleScheduleMeeting} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
-                  Meeting Topic / Title
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>
+                  Meeting Title *
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Q3 Cloud Infrastructure Roadmap"
-                  value={newMeetingTitle}
-                  onChange={(e) => setNewMeetingTitle(e.target.value)}
+                  placeholder="e.g. Q4 Product Architecture Review"
+                  value={scheduleTitle}
+                  onChange={(e) => setScheduleTitle(e.target.value)}
                   className="input-field"
                 />
               </div>
 
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>
+                    Date
+                  </label>
+                  <input
+                    type="date"
+                    value={scheduleDate}
+                    onChange={(e) => setScheduleDate(e.target.value)}
+                    className="input-field"
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>
+                    Time
+                  </label>
+                  <input
+                    type="time"
+                    value={scheduleTime}
+                    onChange={(e) => setScheduleTime(e.target.value)}
+                    className="input-field"
+                  />
+                </div>
+              </div>
+
               <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
-                  Agenda & Description
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>
+                  Agenda / Description
                 </label>
                 <textarea
                   rows={3}
-                  placeholder="Key discussion points, architecture goals..."
-                  value={newMeetingDesc}
-                  onChange={(e) => setNewMeetingDesc(e.target.value)}
+                  placeholder="Describe key objectives or discussion topics..."
+                  value={scheduleDesc}
+                  onChange={(e) => setScheduleDesc(e.target.value)}
                   className="input-field"
                   style={{ resize: 'vertical' }}
                 />
               </div>
 
-              {/* Governance & Media Settings */}
-              <div style={{ background: '#f8fafc', padding: '14px', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                <span style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: '#4f46e5', marginBottom: '8px' }}>
-                  MEETING PERMISSIONS & GOVERNANCE:
-                </span>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', color: '#334155', cursor: 'pointer', marginBottom: '8px' }}>
-                  <input
-                    type="checkbox"
-                    checked={scheduleSettings.allowScreenShare}
-                    onChange={(e) => setScheduleSettings(s => ({ ...s, allowScreenShare: e.target.checked }))}
-                  />
-                  <span>Allow participants to share their screens</span>
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', color: '#334155', cursor: 'pointer', marginBottom: '8px' }}>
-                  <input
-                    type="checkbox"
-                    checked={scheduleSettings.muteOnJoin}
-                    onChange={(e) => setScheduleSettings(s => ({ ...s, muteOnJoin: e.target.checked }))}
-                  />
-                  <span>Mute participants automatically upon joining</span>
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', color: '#334155', cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={scheduleSettings.aiTranscriptionEnabled}
-                    onChange={(e) => setScheduleSettings(s => ({ ...s, aiTranscriptionEnabled: e.target.checked }))}
-                  />
-                  <span>Enable AI live speech-to-text and automated summary</span>
-                </label>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
                 <button
                   type="button"
                   onClick={() => setShowScheduleModal(false)}
                   className="btn btn-secondary"
-                  style={{ borderRadius: '8px' }}
                 >
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary" style={{ borderRadius: '8px' }}>
+                <button type="submit" className="btn btn-primary">
                   Schedule Meeting
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* Recording Playback Modal */}
-      {playbackRecording && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(15, 23, 42, 0.65)',
-          backdropFilter: 'blur(16px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 100,
-          padding: '20px'
-        }}>
-          <div className="glass-panel" style={{ width: '100%', maxWidth: '640px', padding: '28px', borderRadius: '20px', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
-              <div>
-                <h3 style={{ fontSize: '1.25rem', color: '#0f172a', fontWeight: 800 }}>
-                  {playbackRecording.title}
-                </h3>
-                <span style={{ fontSize: '0.8rem', color: '#4f46e5' }}>
-                  Meeting Code: {playbackRecording.code} &bull; {playbackRecording.duration} mins recorded
-                </span>
-              </div>
-              <button
-                onClick={() => setPlaybackRecording(null)}
-                style={{ background: 'transparent', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1.2rem' }}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div style={{ width: '100%', aspectRatio: '16/9', borderRadius: '14px', overflow: 'hidden', background: '#050811', border: '1px solid #e2e8f0', marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {playbackRecording.url && playbackRecording.url.startsWith('blob:') ? (
-                <video src={playbackRecording.url} controls playsInline style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-              ) : (
-                <div style={{ textAlign: 'center', padding: '24px' }}>
-                  <Video size={48} color="#4f46e5" style={{ margin: '0 auto 12px' }} />
-                  <div style={{ color: '#0f172a', fontWeight: 700, fontSize: '1.05rem', marginBottom: '6px' }}>
-                    Multi-Track Recorded Session
-                  </div>
-                  <p style={{ color: '#64748b', fontSize: '0.82rem' }}>
-                    This session contains captured video composition and synchronized audio tracks.
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-              <button onClick={() => setPlaybackRecording(null)} className="btn btn-secondary" style={{ borderRadius: '8px' }}>
-                Close
-              </button>
-            </div>
           </div>
         </div>
       )}

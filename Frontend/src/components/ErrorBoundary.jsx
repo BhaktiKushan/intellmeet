@@ -25,26 +25,25 @@ export class ErrorBoundary extends React.Component {
           alignItems: 'center',
           justifyContent: 'center',
           padding: '24px',
-          background: '#f8fafc',
-          color: '#0f172a',
-          fontFamily: 'system-ui, -apple-system, sans-serif',
+          background: 'var(--bg-main, #080c14)',
+          color: 'var(--text-main, #f8fafc)',
+          fontFamily: 'var(--font-body, system-ui, sans-serif)',
           textAlign: 'center'
         }}>
-          <div style={{
-            background: '#ffffff',
+          <div className="glass-panel" style={{
+            background: 'rgba(14, 21, 36, 0.95)',
             padding: '36px 40px',
             borderRadius: '16px',
-            border: '1px solid #e2e8f0',
+            border: '1px solid var(--border-subtle)',
             maxWidth: '520px',
-            width: '100%',
-            boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.05)'
+            width: '100%'
           }}>
             <div style={{
               width: '48px',
               height: '48px',
               borderRadius: '12px',
-              background: '#fef2f2',
-              color: '#dc2626',
+              background: 'rgba(239, 68, 68, 0.15)',
+              color: '#ef4444',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -53,10 +52,10 @@ export class ErrorBoundary extends React.Component {
               <AlertCircle size={26} />
             </div>
 
-            <h2 style={{ fontSize: '1.35rem', fontWeight: 700, marginBottom: '8px', color: '#0f172a' }}>
+            <h2 style={{ fontSize: '1.35rem', fontWeight: 700, marginBottom: '8px', color: '#fff' }}>
               Unexpected Display Issue
             </h2>
-            <p style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '24px', lineHeight: 1.5 }}>
+            <p style={{ color: 'var(--text-muted, #94a3b8)', fontSize: '0.9rem', marginBottom: '24px', lineHeight: 1.5 }}>
               IntellMeet recovered from an unexpected error. Your meetings, recordings, and action items are safe.
             </p>
 
@@ -99,3 +98,4 @@ export class ErrorBoundary extends React.Component {
 }
 
 export default ErrorBoundary;
+

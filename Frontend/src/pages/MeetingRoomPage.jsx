@@ -1471,26 +1471,25 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        background: '#f8fafc',
-        color: '#0f172a',
+        background: 'var(--bg-main, #070a12)',
+        color: '#fff',
         padding: '24px'
       }}>
-        <div style={{
-          background: '#ffffff',
+        <div className="glass-panel" style={{
+          background: 'rgba(14, 21, 36, 0.95)',
           padding: '36px 44px',
           borderRadius: '16px',
-          border: '1px solid #e2e8f0',
+          border: '1px solid var(--border-subtle)',
           textAlign: 'center',
-          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
           maxWidth: '460px',
           width: '100%'
         }}>
-          <Sparkles size={32} className="animate-spin" color="#4f46e5" style={{ margin: '0 auto 16px' }} />
-          <h3 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '8px', color: '#0f172a' }}>
+          <Sparkles size={32} className="animate-spin" color="#818cf8" style={{ margin: '0 auto 16px' }} />
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '8px', color: '#fff' }}>
             Finalizing Meeting & AI Summary
           </h3>
-          <p style={{ color: '#64748b', fontSize: '0.9rem', margin: 0, lineHeight: 1.5 }}>
-            Releasing media hardware and saving meeting records...
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', margin: 0, lineHeight: 1.5 }}>
+            Releasing media hardware and generating AI intelligence...
           </p>
         </div>
       </div>

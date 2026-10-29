@@ -19,10 +19,10 @@ import {
 
 const COLUMNS = [
   { id: 'backlog', title: 'Backlog', color: '#64748b' },
-  { id: 'todo', title: 'To Do', color: '#0284c7' },
-  { id: 'in-progress', title: 'In Progress', color: '#d97706' },
-  { id: 'in-review', title: 'In Review', color: '#7c3aed' },
-  { id: 'done', title: 'Done', color: '#059669' }
+  { id: 'todo', title: 'To Do', color: '#3b82f6' },
+  { id: 'in-progress', title: 'In Progress', color: '#f59e0b' },
+  { id: 'in-review', title: 'In Review', color: '#a855f7' },
+  { id: 'done', title: 'Done', color: '#10b981' }
 ];
 
 export const KanbanPage = () => {
@@ -58,32 +58,12 @@ export const KanbanPage = () => {
       setTasks(prev => prev.map(t => t._id === taskId ? { ...t, status: newStatus } : t));
       await api.updateTaskStatus(taskId, newStatus);
     } catch (err) {
-      alert('Failed to update task: ' + err.message);
+      console.error('Failed to update task status:', err);
       fetchTasks();
     }
   };
 
-  const handleCreateTask = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await api.createTask({
-        title: newTaskTitle,
-        description: newTaskDesc,
-        priority: newTaskPriority,
-        status: newTaskStatus,
-        assigneeName: user?.name || 'Member'
-      });
-      setShowCreateModal(false);
-      setNewTaskTitle('');
-      setNewTaskDesc('');
-      setTasks(prev => [res.data, ...prev]);
-    } catch (err) {
-      alert('Failed to create task: ' + err.message);
-    }
-  };
-
   const handleDeleteTask = async (taskId) => {
-    if (!window.confirm('Delete this task?')) return;
     try {
       setTasks(prev => prev.filter(t => t._id !== taskId));
       await api.deleteTask(taskId);
@@ -92,6 +72,35 @@ export const KanbanPage = () => {
       fetchTasks();
     }
   };
+
+  const handleCreateTask = async (e) => {
+    e.preventDefault();
+    if (!newTaskTitle.trim()) return;
+
+    try {
+      const res = await api.createTask({
+        title: newTaskTitle,
+        description: newTaskDesc,
+        priority: newTaskPriority,
+        status: newTaskStatus,
+        assigneeName: user?.name || 'Unassigned'
+      });
+      setTasks(prev => [res.data, ...prev]);
+      setShowCreateModal(false);
+      setNewTaskTitle('');
+      setNewTaskDesc('');
+    } catch (err) {
+      alert('Error creating task: ' + err.message);
+    }
+  };
+
+  // Filter tasks
+  const filteredTasks = tasks.filter(task => {
+    const matchesSearch = task.title.toLowerCase().includes(search.toLowerCase()) || 
+      (task.description && task.description.toLowerCase().includes(search.toLowerCase()));
+    const matchesPriority = priorityFilter === 'all' || task.priority === priorityFilter;
+    return matchesSearch && matchesPriority;
+  });
 
   const getNextStatus = (current) => {
     const idx = COLUMNS.findIndex(c => c.id === current);
@@ -103,17 +112,10 @@ export const KanbanPage = () => {
     return idx > 0 ? COLUMNS[idx - 1].id : null;
   };
 
-  const filteredTasks = tasks.filter(t => {
-    const matchesSearch = t.title.toLowerCase().includes(search.toLowerCase()) ||
-      (t.description && t.description.toLowerCase().includes(search.toLowerCase()));
-    const matchesPriority = priorityFilter === 'all' || t.priority === priorityFilter;
-    return matchesSearch && matchesPriority;
-  });
-
   return (
     <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '32px 24px 80px' }}>
       
-      {/* Page Header */}
+      {/* Kanban Header */}
       <div style={{
         display: 'flex',
         flexWrap: 'wrap',
@@ -124,12 +126,12 @@ export const KanbanPage = () => {
       }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-            <h1 style={{ fontSize: '1.8rem', color: '#0f172a', fontWeight: 800 }}>
+            <h1 style={{ fontSize: '1.8rem', color: '#fff', fontWeight: 800 }}>
               Team Kanban Board
             </h1>
             <span className="badge badge-priority-medium">Sprint Workspace</span>
           </div>
-          <p style={{ fontSize: '0.88rem', color: '#64748b', margin: 0 }}>
+          <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)' }}>
             Real-time collaboration board automatically populated by AI Meeting Intelligence
           </p>
         </div>
@@ -138,7 +140,7 @@ export const KanbanPage = () => {
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px' }}>
           {/* Search Box */}
           <div style={{ position: 'relative', width: '220px' }}>
-            <Search size={15} color="#94a3b8" style={{ position: 'absolute', left: '10px', top: '12px' }} />
+            <Search size={15} color="var(--text-dim)" style={{ position: 'absolute', left: '10px', top: '12px' }} />
             <input
               type="text"
               placeholder="Search tasks..."
@@ -164,7 +166,7 @@ export const KanbanPage = () => {
           </select>
 
           {/* Create Task Button */}
-          <button onClick={() => setShowCreateModal(true)} className="btn btn-primary" style={{ fontSize: '0.85rem', borderRadius: '8px' }}>
+          <button onClick={() => setShowCreateModal(true)} className="btn btn-primary" style={{ fontSize: '0.85rem' }}>
             <Plus size={16} />
             <span>Add Task</span>
           </button>
@@ -189,8 +191,7 @@ export const KanbanPage = () => {
               style={{
                 borderRadius: '16px',
                 padding: '16px',
-                background: '#f8fafc',
-                border: '1px solid #e2e8f0',
+                background: 'rgba(12, 18, 32, 0.75)',
                 minHeight: '600px',
                 display: 'flex',
                 flexDirection: 'column',
@@ -208,15 +209,15 @@ export const KanbanPage = () => {
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: col.color }} />
-                  <h3 style={{ fontSize: '0.95rem', color: '#0f172a', fontWeight: 700 }}>{col.title}</h3>
+                  <h3 style={{ fontSize: '0.95rem', color: '#fff', fontWeight: 700 }}>{col.title}</h3>
                 </div>
                 <span style={{
                   fontSize: '0.75rem',
                   fontWeight: 700,
                   padding: '2px 8px',
                   borderRadius: '12px',
-                  background: '#e2e8f0',
-                  color: '#475569'
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  color: 'var(--text-muted)'
                 }}>
                   {colTasks.length}
                 </span>
@@ -228,9 +229,9 @@ export const KanbanPage = () => {
                   <div style={{
                     textAlign: 'center',
                     padding: '30px 10px',
-                    color: '#94a3b8',
+                    color: 'var(--text-dim)',
                     fontSize: '0.8rem',
-                    border: '1px dashed #cbd5e1',
+                    border: '1px dashed rgba(255, 255, 255, 0.08)',
                     borderRadius: '10px'
                   }}>
                     No tasks in {col.title}
@@ -244,14 +245,14 @@ export const KanbanPage = () => {
                       <div
                         key={task._id}
                         style={{
-                          background: '#ffffff',
-                          border: '1px solid #e2e8f0',
+                          background: 'rgba(18, 26, 46, 0.9)',
+                          border: '1px solid var(--border-subtle)',
                           borderRadius: '12px',
                           padding: '14px',
                           display: 'flex',
                           flexDirection: 'column',
                           gap: '10px',
-                          boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.05)',
+                          boxShadow: 'var(--shadow-sm)',
                           transition: 'transform 0.15s, border-color 0.15s'
                         }}
                       >
@@ -263,7 +264,7 @@ export const KanbanPage = () => {
 
                           <button
                             onClick={() => handleDeleteTask(task._id)}
-                            style={{ background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', padding: '2px' }}
+                            style={{ background: 'transparent', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', padding: '2px' }}
                             title="Delete Task"
                           >
                             <Trash2 size={13} />
@@ -272,19 +273,18 @@ export const KanbanPage = () => {
 
                         {/* Title & Description */}
                         <div>
-                          <h4 style={{ fontSize: '0.9rem', color: '#0f172a', fontWeight: 600, lineHeight: 1.35, marginBottom: '4px' }}>
+                          <h4 style={{ fontSize: '0.9rem', color: '#fff', fontWeight: 600, lineHeight: 1.35, marginBottom: '4px' }}>
                             {task.title}
                           </h4>
                           {task.description && (
                             <p style={{
                               fontSize: '0.78rem',
-                              color: '#64748b',
+                              color: 'var(--text-muted)',
                               lineHeight: 1.4,
                               display: '-webkit-box',
                               WebkitLineClamp: 2,
                               WebkitBoxOrient: 'vertical',
-                              overflow: 'hidden',
-                              margin: 0
+                              overflow: 'hidden'
                             }}>
                               {task.description}
                             </p>
@@ -298,8 +298,8 @@ export const KanbanPage = () => {
                             alignItems: 'center',
                             gap: '5px',
                             fontSize: '0.7rem',
-                            color: '#6366f1',
-                            background: '#eef2ff',
+                            color: '#c084fc',
+                            background: 'rgba(168, 85, 247, 0.1)',
                             padding: '3px 8px',
                             borderRadius: '6px'
                           }}>
@@ -316,7 +316,7 @@ export const KanbanPage = () => {
                           alignItems: 'center',
                           justifyContent: 'space-between',
                           paddingTop: '8px',
-                          borderTop: '1px solid #f1f5f9'
+                          borderTop: '1px solid rgba(255, 255, 255, 0.05)'
                         }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <img
@@ -324,7 +324,7 @@ export const KanbanPage = () => {
                               alt="assignee"
                               style={{ width: '22px', height: '22px', borderRadius: '50%' }}
                             />
-                            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                               {task.assigneeName || 'Unassigned'}
                             </span>
                           </div>
@@ -335,9 +335,9 @@ export const KanbanPage = () => {
                               <button
                                 onClick={() => handleStatusChange(task._id, prevCol)}
                                 style={{
-                                  background: '#f1f5f9',
-                                  border: '1px solid #e2e8f0',
-                                  color: '#475569',
+                                  background: 'rgba(255, 255, 255, 0.08)',
+                                  border: 'none',
+                                  color: 'var(--text-muted)',
                                   borderRadius: '4px',
                                   padding: '4px',
                                   cursor: 'pointer'
@@ -351,9 +351,9 @@ export const KanbanPage = () => {
                               <button
                                 onClick={() => handleStatusChange(task._id, nextCol)}
                                 style={{
-                                  background: '#eef2ff',
-                                  border: '1px solid #c7d2fe',
-                                  color: '#4f46e5',
+                                  background: 'rgba(99, 102, 241, 0.2)',
+                                  border: 'none',
+                                  color: '#a5b4fc',
                                   borderRadius: '4px',
                                   padding: '4px',
                                   cursor: 'pointer'
@@ -381,7 +381,7 @@ export const KanbanPage = () => {
         <div style={{
           position: 'fixed',
           inset: 0,
-          background: 'rgba(15, 23, 42, 0.5)',
+          background: 'rgba(0,0,0,0.7)',
           backdropFilter: 'blur(8px)',
           display: 'flex',
           alignItems: 'center',
@@ -389,17 +389,17 @@ export const KanbanPage = () => {
           zIndex: 100,
           padding: '20px'
         }}>
-          <div className="glass-panel" style={{ width: '100%', maxWidth: '480px', padding: '28px', borderRadius: '18px', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)' }}>
-            <h3 style={{ fontSize: '1.25rem', color: '#0f172a', fontWeight: 700, marginBottom: '6px' }}>
+          <div className="glass-panel" style={{ width: '100%', maxWidth: '480px', padding: '28px', borderRadius: '18px' }}>
+            <h3 style={{ fontSize: '1.25rem', color: '#fff', marginBottom: '8px' }}>
               Create Sprint Task
             </h3>
-            <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '20px' }}>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '20px' }}>
               Add a new actionable objective to your enterprise Kanban board.
             </p>
 
             <form onSubmit={handleCreateTask} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>
                   Task Title
                 </label>
                 <input
@@ -413,7 +413,7 @@ export const KanbanPage = () => {
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>
                   Description & Context
                 </label>
                 <textarea
@@ -428,7 +428,7 @@ export const KanbanPage = () => {
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>
                     Priority
                   </label>
                   <select
@@ -444,7 +444,7 @@ export const KanbanPage = () => {
                 </div>
 
                 <div>
-                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+                  <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>
                     Column
                   </label>
                   <select
@@ -466,11 +466,10 @@ export const KanbanPage = () => {
                   type="button"
                   onClick={() => setShowCreateModal(false)}
                   className="btn btn-secondary"
-                  style={{ borderRadius: '8px' }}
                 >
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary" style={{ borderRadius: '8px' }}>
+                <button type="submit" className="btn btn-primary">
                   Create Task
                 </button>
               </div>
@@ -482,5 +481,3 @@ export const KanbanPage = () => {
     </div>
   );
 };
-
-export default KanbanPage;

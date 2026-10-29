@@ -74,7 +74,14 @@ export const generateMeetingSummary = async (transcript = [], meetingTitle = 'Te
 
   // 1. Attempt Google Gemini Generation
   if (hasGeminiKey) {
-    const candidateModels = ['gemini-3.5-flash', 'gemini-flash-latest', 'gemini-3.8-flash'];
+    const candidateModels = [
+      'gemini-3.1-flash-lite',
+      'gemini-flash-lite-latest',
+      'gemini-3.5-flash-lite',
+      'gemini-flash-latest',
+      'gemini-3.5-flash',
+      'gemini-3.8-flash'
+    ];
 
     const prompt = `You are an elite enterprise AI meeting intelligence engine for IntellMeet.
 Analyze the actual meeting transcript below for the meeting session titled "${meetingTitle}".
@@ -123,15 +130,34 @@ Respond ONLY with a valid JSON object matching this schema:
         console.log(`[AI Service] Attempting Gemini model (${model}) for "${meetingTitle}"`);
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
         
-        const res = await fetch(geminiUrl, {
+        let res = await fetch(geminiUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           signal: AbortSignal.timeout(15000),
           body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: { responseMimeType: 'application/json' }
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.2,
+              responseMimeType: 'application/json'
+            }
           })
         });
+
+        // If HTTP 400 INVALID_ARGUMENT (some endpoints disallow responseMimeType in generationConfig), retry with plain payload
+        if (res.status === 400) {
+          console.warn(`[AI Service] Model ${model} returned 400 with responseMimeType. Retrying without responseMimeType...`);
+          res = await fetch(geminiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: AbortSignal.timeout(15000),
+            body: JSON.stringify({
+              contents: [{ role: 'user', parts: [{ text: prompt }] }],
+              generationConfig: {
+                temperature: 0.2
+              }
+            })
+          });
+        }
 
         if (res.ok) {
           const data = await res.json();

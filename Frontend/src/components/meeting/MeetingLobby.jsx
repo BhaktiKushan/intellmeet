@@ -86,6 +86,7 @@ export const MeetingLobby = ({
           sum += dataArray[i];
         }
         const avg = sum / dataArray.length;
+        // Normalize 0 to 100
         const level = Math.min(100, Math.round((avg / 128) * 100));
         setAudioLevel(level);
         animFrameRef.current = requestAnimationFrame(checkVolume);
@@ -113,7 +114,7 @@ export const MeetingLobby = ({
   return (
     <div style={{
       maxWidth: '1040px',
-      margin: '32px auto',
+      margin: '24px auto',
       padding: '16px',
       position: 'relative',
       zIndex: 1
@@ -123,18 +124,14 @@ export const MeetingLobby = ({
         <button
           onClick={onCancel}
           style={{
-            background: '#ffffff',
-            border: '1px solid #e2e8f0',
-            borderRadius: '8px',
-            color: '#475569',
+            background: 'transparent',
+            border: 'none',
+            color: 'var(--text-muted)',
             fontSize: '0.88rem',
-            fontWeight: 500,
             cursor: 'pointer',
             display: 'inline-flex',
             alignItems: 'center',
-            gap: '8px',
-            padding: '8px 14px',
-            boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)'
+            gap: '6px'
           }}
         >
           <ArrowLeft size={16} />
@@ -145,11 +142,11 @@ export const MeetingLobby = ({
       {/* Permission Warning Notice if Camera / Mic Denied */}
       {permissionError && (
         <div style={{
-          background: '#fef2f2',
-          border: '1px solid #fecaca',
-          color: '#b91c1c',
+          background: 'rgba(239, 68, 68, 0.15)',
+          border: '1px solid rgba(239, 68, 68, 0.35)',
+          color: '#fca5a5',
           borderRadius: '12px',
-          padding: '14px 18px',
+          padding: '12px 18px',
           marginBottom: '20px',
           display: 'flex',
           alignItems: 'center',
@@ -163,19 +160,16 @@ export const MeetingLobby = ({
         </div>
       )}
 
-      {/* Main Pre-Join Container */}
+      {/* Main Pre-Join Container: Responsive 2-column or stacked */}
       <div
         className="glass-panel lobby-container"
         style={{
-          borderRadius: '20px',
+          borderRadius: '24px',
           padding: '36px',
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
-          gap: '36px',
-          alignItems: 'center',
-          background: '#ffffff',
-          border: '1px solid #e2e8f0',
-          boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.03)'
+          gap: '32px',
+          alignItems: 'center'
         }}
       >
         {/* Left Column: Video Preview Box & Level Meter */}
@@ -184,11 +178,11 @@ export const MeetingLobby = ({
             position: 'relative',
             width: '100%',
             aspectRatio: '16/9',
-            borderRadius: '16px',
+            borderRadius: '18px',
             overflow: 'hidden',
             background: '#070a14',
-            border: '2px solid #e2e8f0',
-            boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)',
+            border: '2px solid rgba(255, 255, 255, 0.1)',
+            boxShadow: 'var(--shadow-lg)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -220,12 +214,12 @@ export const MeetingLobby = ({
                     height: '92px',
                     borderRadius: '50%',
                     marginBottom: '12px',
-                    border: '2px solid rgba(255, 255, 255, 0.2)',
+                    border: '2px solid rgba(255, 255, 255, 0.15)',
                     objectFit: 'cover'
                   }}
                 />
                 <div style={{ fontSize: '1rem', color: '#ffffff', fontWeight: 600 }}>Camera is Turned Off</div>
-                <div style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: '4px' }}>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-dim)', marginTop: '4px' }}>
                   Others will see your profile photo
                 </div>
               </div>
@@ -266,8 +260,8 @@ export const MeetingLobby = ({
                 position: 'absolute',
                 top: '12px',
                 right: '12px',
-                background: 'rgba(0, 0, 0, 0.65)',
-                border: '1px solid rgba(255, 255, 255, 0.15)',
+                background: 'rgba(0, 0, 0, 0.55)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
                 color: '#ffffff',
                 borderRadius: '20px',
                 padding: '4px 10px',
@@ -285,24 +279,24 @@ export const MeetingLobby = ({
             display: 'flex',
             alignItems: 'center',
             gap: '10px',
-            background: '#f8fafc',
-            padding: '10px 14px',
+            background: 'rgba(15, 23, 42, 0.65)',
+            padding: '8px 14px',
             borderRadius: '12px',
-            border: '1px solid #e2e8f0'
+            border: '1px solid var(--border-subtle)'
           }}>
-            <Volume2 size={16} color={audioLevel > 15 ? '#059669' : '#94a3b8'} />
-            <div style={{ flex: 1, height: '6px', background: '#e2e8f0', borderRadius: '3px', overflow: 'hidden' }}>
+            <Volume2 size={16} color={audioLevel > 15 ? '#10b981' : 'var(--text-dim)'} />
+            <div style={{ flex: 1, height: '6px', background: 'rgba(255, 255, 255, 0.1)', borderRadius: '3px', overflow: 'hidden' }}>
               <div
                 style={{
                   height: '100%',
                   width: `${audioLevel}%`,
-                  background: 'linear-gradient(90deg, #059669 0%, #0284c7 100%)',
+                  background: 'linear-gradient(90deg, #10b981 0%, #06b6d4 100%)',
                   borderRadius: '3px',
                   transition: 'width 0.1s ease-out'
                 }}
               />
             </div>
-            <span style={{ fontSize: '0.75rem', color: '#64748b', minWidth: '48px', fontWeight: 500 }}>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)', minWidth: '40px' }}>
               {isAudioMuted ? 'Muted' : audioLevel > 15 ? 'Speaking' : 'Quiet'}
             </span>
           </div>
@@ -315,20 +309,20 @@ export const MeetingLobby = ({
             display: 'inline-flex',
             alignItems: 'center',
             gap: '6px',
-            background: 'rgba(79, 70, 229, 0.08)',
-            border: '1px solid rgba(79, 70, 229, 0.25)',
-            color: '#4f46e5',
+            background: 'rgba(99, 102, 241, 0.15)',
+            border: '1px solid rgba(99, 102, 241, 0.3)',
+            color: '#a5b4fc',
             padding: '4px 12px',
             borderRadius: '20px',
             fontSize: '0.78rem',
             fontWeight: 600,
             marginBottom: '12px'
           }}>
-            <Radio size={14} color="#4f46e5" />
+            <Radio size={14} color="#818cf8" />
             <span>Ready to Join</span>
           </div>
 
-          <h2 style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0f172a', marginBottom: '8px' }}>
+          <h2 style={{ fontSize: '1.75rem', fontWeight: 800, color: '#ffffff', marginBottom: '8px' }}>
             {meeting?.title || 'Enterprise Conference'}
           </h2>
 
@@ -337,7 +331,7 @@ export const MeetingLobby = ({
             alignItems: 'center',
             gap: '10px',
             marginBottom: '24px',
-            color: '#64748b',
+            color: 'var(--text-muted)',
             fontSize: '0.88rem'
           }}>
             <span>Room Code:</span>
@@ -347,24 +341,24 @@ export const MeetingLobby = ({
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '6px',
-                background: '#f1f5f9',
-                border: '1px solid #cbd5e1',
+                background: 'rgba(255, 255, 255, 0.05)',
+                border: '1px solid var(--border-subtle)',
                 borderRadius: '6px',
-                padding: '4px 10px',
-                color: '#4f46e5',
+                padding: '3px 8px',
+                color: '#818cf8',
                 fontWeight: 700,
                 fontSize: '0.82rem',
                 cursor: 'pointer'
               }}
             >
               <span>{roomId}</span>
-              {copiedCode ? <Check size={12} color="#059669" /> : <Copy size={12} />}
+              {copiedCode ? <Check size={12} color="#34d399" /> : <Copy size={12} />}
             </button>
           </div>
 
           {/* User Display Name Confirmation */}
           <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>
               Your Name
             </label>
             <input
@@ -380,7 +374,7 @@ export const MeetingLobby = ({
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '28px' }}>
             {/* Microphone Selector */}
             <div>
-              <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>
+              <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-dim)', marginBottom: '4px' }}>
                 Microphone
               </label>
               <select
@@ -400,7 +394,7 @@ export const MeetingLobby = ({
 
             {/* Camera Selector */}
             <div>
-              <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: '#64748b', marginBottom: '4px' }}>
+              <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-dim)', marginBottom: '4px' }}>
                 Camera
               </label>
               <select
@@ -424,7 +418,7 @@ export const MeetingLobby = ({
             <button
               onClick={onCancel}
               className="btn btn-secondary"
-              style={{ flex: 1, padding: '12px', borderRadius: '10px' }}
+              style={{ flex: 1, padding: '14px', borderRadius: '12px' }}
             >
               Cancel
             </button>
@@ -433,10 +427,10 @@ export const MeetingLobby = ({
               className="btn btn-primary"
               style={{
                 flex: 2,
-                padding: '12px 24px',
-                borderRadius: '10px',
-                fontSize: '0.98rem',
-                fontWeight: 600
+                padding: '14px 24px',
+                borderRadius: '12px',
+                fontSize: '1rem',
+                fontWeight: 700
               }}
             >
               <Video size={18} />
@@ -448,5 +442,3 @@ export const MeetingLobby = ({
     </div>
   );
 };
-
-export default MeetingLobby;

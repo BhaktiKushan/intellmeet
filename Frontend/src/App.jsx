@@ -4,6 +4,7 @@ import { ErrorBoundary } from './components/ErrorBoundary.jsx';
 import { Navbar } from './components/Navbar.jsx';
 import { LandingPage } from './pages/LandingPage.jsx';
 import { DashboardPage } from './pages/DashboardPage.jsx';
+import { MeetingsPage } from './pages/MeetingsPage.jsx';
 import { MeetingRoomPage } from './pages/MeetingRoomPage.jsx';
 import { PostMeetingDetailsPage } from './pages/PostMeetingDetailsPage.jsx';
 import { KanbanPage } from './pages/KanbanPage.jsx';
@@ -23,8 +24,8 @@ export const App = () => {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#f8fafc',
-        color: '#4f46e5',
+        backgroundColor: 'var(--bg-main, #080c14)',
+        color: '#a5b4fc',
         fontSize: '1.1rem',
         fontWeight: 600
       }}>
@@ -110,8 +111,16 @@ export const App = () => {
       {/* Main Routed Page */}
       <main style={{ position: 'relative', zIndex: 1 }}>
         <ErrorBoundary onNavigateHome={() => setActiveTab('dashboard')}>
-          {(activeTab === 'dashboard' || activeTab === 'meetings') && (
+          {activeTab === 'dashboard' && (
             <DashboardPage
+              onJoinMeeting={(code) => setActiveRoomId(code)}
+              onViewMeetingDetails={(codeOrId) => setSummaryMeetingId(codeOrId)}
+              onNavigateTab={(tab) => setActiveTab(tab)}
+            />
+          )}
+
+          {activeTab === 'meetings' && (
+            <MeetingsPage
               onJoinMeeting={(code) => setActiveRoomId(code)}
               onViewMeetingDetails={(codeOrId) => setSummaryMeetingId(codeOrId)}
               onNavigateTab={(tab) => setActiveTab(tab)}
