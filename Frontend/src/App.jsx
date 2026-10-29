@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from './context/AuthContext.jsx';
+import { ErrorBoundary } from './components/ErrorBoundary.jsx';
 import { Navbar } from './components/Navbar.jsx';
 import { LandingPage } from './pages/LandingPage.jsx';
 import { DashboardPage } from './pages/DashboardPage.jsx';
@@ -41,18 +42,25 @@ export const App = () => {
   if (activeRoomId) {
     return (
       <div style={{ position: 'relative', minHeight: '100vh', background: '#070a12' }}>
-        <MeetingRoomPage
-          roomId={activeRoomId}
-          onLeaveRoom={() => {
-            const currentRoom = activeRoomId;
-            setActiveRoomId(null);
-            setSummaryMeetingId(currentRoom);
-          }}
-          onViewSummary={(id) => {
-            setActiveRoomId(null);
-            setSummaryMeetingId(id);
-          }}
-        />
+        <ErrorBoundary onNavigateHome={() => setActiveRoomId(null)}>
+          <MeetingRoomPage
+            roomId={activeRoomId}
+            onLeaveRoom={() => {
+              const currentRoom = activeRoomId;
+              setActiveRoomId(null);
+              setSummaryMeetingId(currentRoom);
+            }}
+            onViewSummary={(id) => {
+              setActiveRoomId(null);
+              setSummaryMeetingId(id || activeRoomId);
+            }}
+            onCancelLobby={() => {
+              setActiveRoomId(null);
+              setSummaryMeetingId(null);
+              setActiveTab('dashboard');
+            }}
+          />
+        </ErrorBoundary>
       </div>
     );
   }
@@ -69,14 +77,22 @@ export const App = () => {
             setActiveTab(tab);
           }}
         />
-        <PostMeetingDetailsPage
-          meetingIdOrCode={summaryMeetingId}
-          onBack={() => setSummaryMeetingId(null)}
-          onNavigateKanban={() => {
-            setSummaryMeetingId(null);
-            setActiveTab('kanban');
-          }}
-        />
+        <ErrorBoundary onNavigateHome={() => {
+          setSummaryMeetingId(null);
+          setActiveTab('dashboard');
+        }}>
+          <PostMeetingDetailsPage
+            meetingIdOrCode={summaryMeetingId}
+            onBack={() => {
+              setSummaryMeetingId(null);
+              setActiveTab('dashboard');
+            }}
+            onNavigateKanban={() => {
+              setSummaryMeetingId(null);
+              setActiveTab('kanban');
+            }}
+          />
+        </ErrorBoundary>
       </div>
     );
   }
@@ -93,19 +109,21 @@ export const App = () => {
 
       {/* Main Routed Page */}
       <main style={{ position: 'relative', zIndex: 1 }}>
-        {(activeTab === 'dashboard' || activeTab === 'meetings') && (
-          <DashboardPage
-            onJoinMeeting={(code) => setActiveRoomId(code)}
-            onViewMeetingDetails={(codeOrId) => setSummaryMeetingId(codeOrId)}
-            onNavigateTab={(tab) => setActiveTab(tab)}
-          />
-        )}
+        <ErrorBoundary onNavigateHome={() => setActiveTab('dashboard')}>
+          {(activeTab === 'dashboard' || activeTab === 'meetings') && (
+            <DashboardPage
+              onJoinMeeting={(code) => setActiveRoomId(code)}
+              onViewMeetingDetails={(codeOrId) => setSummaryMeetingId(codeOrId)}
+              onNavigateTab={(tab) => setActiveTab(tab)}
+            />
+          )}
 
-        {activeTab === 'kanban' && <KanbanPage />}
+          {activeTab === 'kanban' && <KanbanPage />}
 
-        {activeTab === 'analytics' && <AnalyticsPage />}
+          {activeTab === 'analytics' && <AnalyticsPage />}
 
-        {activeTab === 'docs' && <DocsPage />}
+          {activeTab === 'docs' && <DocsPage />}
+        </ErrorBoundary>
       </main>
     </div>
   );

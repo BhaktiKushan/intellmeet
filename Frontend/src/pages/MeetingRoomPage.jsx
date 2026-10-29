@@ -31,11 +31,12 @@ const ICE_SERVERS = {
   ]
 };
 
-export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
+export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLobby }) => {
   const { user } = useAuth();
 
   // Navigation & Lifecycle State
   const [inLobby, setInLobby] = useState(true);
+  const [isEndingSession, setIsEndingSession] = useState(false);
   const [meeting, setMeeting] = useState(null);
   const [userRole, setUserRole] = useState('participant'); // 'host' | 'participant'
   const [hostSocketId, setHostSocketId] = useState(null);
@@ -1429,10 +1430,12 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   // End / Leave Meeting
   // ----------------------------------------------------
   const handleLeaveOrEnd = async () => {
+    setIsEndingSession(true);
+
     // 1. Immediately stop camera, microphone, screen share, and WebRTC connections
     terminateAllMediaAndConnections();
 
-    const targetMeetingId = meeting?._id || roomId;
+    const targetMeetingId = meeting?._id || meeting?.code || roomId;
     if (targetMeetingId) {
       try {
         await api.endMeeting(targetMeetingId, {
@@ -1444,7 +1447,11 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
       }
     }
 
-    onLeaveRoom();
+    if (onViewSummary) {
+      onViewSummary(meeting?.code || targetMeetingId || roomId);
+    } else if (onLeaveRoom) {
+      onLeaveRoom();
+    }
   };
 
   const copyRoomCode = () => {
@@ -1452,6 +1459,43 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
     setCopiedCode(true);
     setTimeout(() => setCopiedCode(false), 2000);
   };
+
+  // ----------------------------------------------------
+  // SESSION FINALIZING VIEW (Prevents blank screens while saving)
+  // ----------------------------------------------------
+  if (isEndingSession) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: '#f8fafc',
+        color: '#0f172a',
+        padding: '24px'
+      }}>
+        <div style={{
+          background: '#ffffff',
+          padding: '36px 44px',
+          borderRadius: '16px',
+          border: '1px solid #e2e8f0',
+          textAlign: 'center',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)',
+          maxWidth: '460px',
+          width: '100%'
+        }}>
+          <Sparkles size={32} className="animate-spin" color="#4f46e5" style={{ margin: '0 auto 16px' }} />
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '8px', color: '#0f172a' }}>
+            Finalizing Meeting & AI Summary
+          </h3>
+          <p style={{ color: '#64748b', fontSize: '0.9rem', margin: 0, lineHeight: 1.5 }}>
+            Releasing media hardware and saving meeting records...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // ----------------------------------------------------
   // PRE-MEETING LOBBY VIEW
@@ -1480,7 +1524,11 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
         onJoin={handleJoinMeeting}
         onCancel={() => {
           terminateAllMediaAndConnections();
-          onLeaveRoom();
+          if (onCancelLobby) {
+            onCancelLobby();
+          } else {
+            onLeaveRoom();
+          }
         }}
       />
     );

@@ -89,10 +89,9 @@ router.post('/', protect, async (req, res, next) => {
 // Get meeting by Code or ID
 router.get('/:codeOrId', protect, async (req, res, next) => {
   try {
-    const { codeOrId } = req.params;
-
-    const isObjectId = /^[0-9a-fA-F]{24}$/.test(codeOrId);
-    const query = isObjectId ? { _id: codeOrId } : { code: codeOrId };
+    const cleanCodeOrId = (req.params.codeOrId || '').trim();
+    const isObjectId = /^[0-9a-fA-F]{24}$/.test(cleanCodeOrId);
+    const query = isObjectId ? { $or: [{ _id: cleanCodeOrId }, { code: cleanCodeOrId }] } : { code: cleanCodeOrId };
 
     let meeting = await Meeting.findOne(query)
       .populate('host', 'name email avatar title department')
@@ -101,8 +100,8 @@ router.get('/:codeOrId', protect, async (req, res, next) => {
 
     if (!meeting) {
       meeting = await Meeting.create({
-        title: `Meeting (${codeOrId})`,
-        code: isObjectId ? `meet-${codeOrId.slice(0, 8)}` : codeOrId,
+        title: `Meeting (${cleanCodeOrId})`,
+        code: isObjectId ? `meet-${cleanCodeOrId.slice(0, 8)}` : cleanCodeOrId,
         host: req.user._id,
         status: 'live',
         participants: [
@@ -178,14 +177,15 @@ router.put('/:id', protect, async (req, res, next) => {
 // End meeting and auto-generate AI Intelligence (Summary, Takeaways & Action Items)
 router.post('/:id/end', protect, async (req, res, next) => {
   try {
-    const isObjectId = /^[0-9a-fA-F]{24}$/.test(req.params.id);
-    const query = isObjectId ? { _id: req.params.id } : { code: req.params.id };
+    const cleanId = (req.params.id || '').trim();
+    const isObjectId = /^[0-9a-fA-F]{24}$/.test(cleanId);
+    const query = isObjectId ? { $or: [{ _id: cleanId }, { code: cleanId }] } : { code: cleanId };
     let meeting = await Meeting.findOne(query);
 
     if (!meeting) {
       meeting = await Meeting.create({
-        title: `Meeting (${req.params.id})`,
-        code: req.params.id,
+        title: `Meeting (${cleanId})`,
+        code: cleanId,
         host: req.user._id,
         status: 'ended'
       });
@@ -238,14 +238,15 @@ router.post('/:id/end', protect, async (req, res, next) => {
 // Manually trigger or re-generate AI intelligence for a meeting
 router.post('/:id/ai-intelligence', protect, async (req, res, next) => {
   try {
-    const isObjectId = /^[0-9a-fA-F]{24}$/.test(req.params.id);
-    const query = isObjectId ? { _id: req.params.id } : { code: req.params.id };
+    const cleanId = (req.params.id || '').trim();
+    const isObjectId = /^[0-9a-fA-F]{24}$/.test(cleanId);
+    const query = isObjectId ? { $or: [{ _id: cleanId }, { code: cleanId }] } : { code: cleanId };
     let meeting = await Meeting.findOne(query);
 
     if (!meeting) {
       meeting = await Meeting.create({
-        title: `Meeting (${req.params.id})`,
-        code: req.params.id,
+        title: `Meeting (${cleanId})`,
+        code: cleanId,
         host: req.user._id,
         status: 'ended'
       });
@@ -297,7 +298,10 @@ router.post('/:id/ai-intelligence', protect, async (req, res, next) => {
 // Convert Action Item to Kanban Task
 router.post('/:id/action-items/:itemId/task', protect, async (req, res, next) => {
   try {
-    const meeting = await Meeting.findById(req.params.id);
+    const cleanId = (req.params.id || '').trim();
+    const isObjectId = /^[0-9a-fA-F]{24}$/.test(cleanId);
+    const query = isObjectId ? { $or: [{ _id: cleanId }, { code: cleanId }] } : { code: cleanId };
+    const meeting = await Meeting.findOne(query);
     if (!meeting) {
       return res.status(404).json({ success: false, message: 'Meeting not found' });
     }
@@ -341,8 +345,9 @@ router.post('/:id/action-items/:itemId/task', protect, async (req, res, next) =>
 // Save Meeting Recording URL and Status
 router.post('/:id/recording', protect, async (req, res, next) => {
   try {
-    const isObjectId = /^[0-9a-fA-F]{24}$/.test(req.params.id);
-    const query = isObjectId ? { _id: req.params.id } : { code: req.params.id };
+    const cleanId = (req.params.id || '').trim();
+    const isObjectId = /^[0-9a-fA-F]{24}$/.test(cleanId);
+    const query = isObjectId ? { $or: [{ _id: cleanId }, { code: cleanId }] } : { code: cleanId };
     const meeting = await Meeting.findOne(query);
 
     if (!meeting) {

@@ -19,65 +19,150 @@ import {
   Award
 } from 'lucide-react';
 
+// Safe helper to extract plain string from primitives or nested objects
+const safeString = (val, fallback = '') => {
+  if (val === null || val === undefined) return fallback;
+  if (typeof val === 'string') return val.trim();
+  if (typeof val === 'number' || typeof val === 'boolean') return String(val);
+  if (typeof val === 'object') {
+    return (
+      val.text ||
+      val.description ||
+      val.task ||
+      val.name ||
+      val.title ||
+      val.takeaway ||
+      val.decision ||
+      val.question ||
+      val.topic ||
+      JSON.stringify(val)
+    );
+  }
+  return fallback;
+};
+
+// Safe date formatter that will never throw on invalid dates
+const safeFormatDate = (dateVal, options = { month: 'short', day: 'numeric', year: 'numeric' }) => {
+  if (!dateVal) return 'Recent';
+  try {
+    const d = new Date(dateVal);
+    if (isNaN(d.getTime())) {
+      return typeof dateVal === 'string' ? dateVal : 'Recent';
+    }
+    return d.toLocaleDateString(undefined, options);
+  } catch (e) {
+    return 'Recent';
+  }
+};
+
+// Safe extractor for action item properties
+const getActionItemDetails = (item, idx = 0) => {
+  if (!item) return { id: `item-${idx}`, task: 'Action item', assignee: 'Engineering Team', priority: 'medium', dueDate: 'In 3 days' };
+
+  if (typeof item === 'string') {
+    return {
+      id: `item-${idx}`,
+      task: item,
+      assignee: 'Engineering Team',
+      priority: 'medium',
+      dueDate: 'In 3 days'
+    };
+  }
+
+  const id = item.id || item._id || `item-${idx}`;
+  const task = safeString(item.task || item.description, `Deliverable #${idx + 1}`);
+  let assignee = 'Engineering Team';
+  if (typeof item.assignee === 'string') {
+    assignee = item.assignee;
+  } else if (item.assignee && typeof item.assignee === 'object') {
+    assignee = item.assignee.name || item.assignee.email || 'Engineering Team';
+  } else if (item.assigneeId && typeof item.assigneeId === 'object') {
+    assignee = item.assigneeId.name || item.assigneeId.email || 'Engineering Team';
+  }
+
+  const rawPriority = (item.priority || 'medium').toLowerCase();
+  const priority = ['urgent', 'high', 'medium', 'low'].includes(rawPriority) ? rawPriority : 'medium';
+  const dueDate = safeFormatDate(item.dueDate, { month: 'short', day: 'numeric' });
+
+  return { id, task, assignee, priority, dueDate, rawDueDate: item.dueDate };
+};
+
 export const PostMeetingDetailsPage = ({ meetingIdOrCode, onBack, onNavigateKanban }) => {
   const [meeting, setMeeting] = useState(null);
   const [loading, setLoading] = useState(true);
   const [reanalyzing, setReanalyzing] = useState(false);
   const [summaryError, setSummaryError] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState('summary'); // 'summary' | 'transcript' | 'actions'
+  const [activeTab, setActiveTab] = useState('summary'); // 'summary' | 'actions' | 'transcript'
   const [convertedTasks, setConvertedTasks] = useState(new Set());
   const [actionNotice, setActionNotice] = useState('');
 
   const loadMeetingDetails = async () => {
+    if (!meetingIdOrCode) {
+      setLoading(false);
+      setSummaryError('No meeting identifier provided.');
+      return;
+    }
+
     try {
       setLoading(true);
       setSummaryError(null);
+
       const res = await api.getMeeting(meetingIdOrCode);
-      const meetingData = res.data;
+      const meetingData = res?.data || res;
+
+      if (!meetingData) {
+        throw new Error(`Meeting "${meetingIdOrCode}" was not found.`);
+      }
+
       setMeeting(meetingData);
 
       // Track existing converted tasks
       const converted = new Set();
-      (meetingData?.actionItems || []).forEach(item => {
-        if (item.taskId) converted.add(item.id);
+      (meetingData.actionItems || []).forEach(item => {
+        if (item?.taskId) converted.add(item.id || item._id);
       });
       setConvertedTasks(converted);
 
-      // If summary is not yet generated, auto-trigger Gemini intelligence
-      if (meetingData && (!meetingData.summary || !meetingData.keyTakeaways || meetingData.keyTakeaways.length === 0)) {
+      // If summary is completely missing, trigger generation
+      const hasSummary = Boolean(meetingData.summary && meetingData.summary.trim().length > 0);
+      const hasTakeaways = Array.isArray(meetingData.keyTakeaways) && meetingData.keyTakeaways.length > 0;
+
+      if (!hasSummary || !hasTakeaways) {
         triggerAiGeneration(meetingData);
       }
     } catch (err) {
       console.error('Failed to load meeting details:', err);
-      setSummaryError(err.message || 'Failed to load meeting details.');
+      setSummaryError(err.message || 'Unable to retrieve meeting intelligence.');
     } finally {
       setLoading(false);
     }
   };
 
   const triggerAiGeneration = async (currentMeeting) => {
-    const targetId = currentMeeting?._id || meetingIdOrCode;
+    const targetId = currentMeeting?._id || currentMeeting?.code || meetingIdOrCode;
     if (!targetId) return;
 
     setReanalyzing(true);
     setSummaryError(null);
     try {
-      const res = await api.generateAiSummary(targetId, currentMeeting?.transcript || []);
-      if (res.data) {
+      const transcriptToSend = Array.isArray(currentMeeting?.transcript) ? currentMeeting.transcript : [];
+      const res = await api.generateAiSummary(targetId, transcriptToSend);
+
+      if (res?.data) {
         setMeeting(prev => ({
           ...(prev || currentMeeting),
-          summary: res.data.summary,
-          topicsCovered: res.data.topicsCovered || [],
-          keyTakeaways: res.data.keyTakeaways || [],
-          keyDecisions: res.data.keyDecisions || [],
-          importantQuestions: res.data.importantQuestions || [],
-          actionItems: res.data.actionItems || []
+          summary: safeString(res.data.summary, prev?.summary || 'Meeting concluded.'),
+          topicsCovered: Array.isArray(res.data.topicsCovered) ? res.data.topicsCovered : [],
+          keyTakeaways: Array.isArray(res.data.keyTakeaways) ? res.data.keyTakeaways : [],
+          keyDecisions: Array.isArray(res.data.keyDecisions) ? res.data.keyDecisions : [],
+          importantQuestions: Array.isArray(res.data.importantQuestions) ? res.data.importantQuestions : [],
+          actionItems: Array.isArray(res.data.actionItems) ? res.data.actionItems : []
         }));
       }
     } catch (err) {
       console.warn('AI summary generation note:', err.message);
-      setSummaryError('Failed to generate AI summary: ' + (err.message || 'Network error'));
+      setSummaryError('Failed to generate AI summary: ' + (err.message || 'Service unavailable'));
     } finally {
       setReanalyzing(false);
     }
@@ -89,14 +174,15 @@ export const PostMeetingDetailsPage = ({ meetingIdOrCode, onBack, onNavigateKanb
 
   const handleConvertToTask = async (actionItem) => {
     try {
-      const targetId = meeting?._id || meetingIdOrCode;
-      await api.convertActionItemToTask(targetId, actionItem.id);
-      setConvertedTasks(prev => new Set(prev).add(actionItem.id));
-      setActionNotice(`Task "${actionItem.task.slice(0, 30)}..." pushed to Kanban board!`);
+      const targetId = meeting?._id || meeting?.code || meetingIdOrCode;
+      const itemId = actionItem.id || actionItem._id;
+      await api.convertActionItemToTask(targetId, itemId);
+      setConvertedTasks(prev => new Set(prev).add(itemId));
+      setActionNotice(`Action item pushed to Kanban board!`);
       setTimeout(() => setActionNotice(''), 4000);
       loadMeetingDetails();
     } catch (err) {
-      alert('Failed to convert action item to task: ' + err.message);
+      alert('Failed to convert action item to task: ' + (err.message || 'Error'));
     }
   };
 
@@ -104,19 +190,22 @@ export const PostMeetingDetailsPage = ({ meetingIdOrCode, onBack, onNavigateKanb
     setReanalyzing(true);
     setSummaryError(null);
     try {
-      const targetId = meeting?._id || meetingIdOrCode;
-      const res = await api.generateAiSummary(targetId, meeting?.transcript || []);
-      setMeeting(prev => ({
-        ...prev,
-        summary: res.data.summary,
-        topicsCovered: res.data.topicsCovered || [],
-        keyTakeaways: res.data.keyTakeaways || [],
-        keyDecisions: res.data.keyDecisions || [],
-        importantQuestions: res.data.importantQuestions || [],
-        actionItems: res.data.actionItems || []
-      }));
+      const targetId = meeting?._id || meeting?.code || meetingIdOrCode;
+      const transcriptToSend = Array.isArray(meeting?.transcript) ? meeting.transcript : [];
+      const res = await api.generateAiSummary(targetId, transcriptToSend);
+      if (res?.data) {
+        setMeeting(prev => ({
+          ...prev,
+          summary: safeString(res.data.summary),
+          topicsCovered: Array.isArray(res.data.topicsCovered) ? res.data.topicsCovered : [],
+          keyTakeaways: Array.isArray(res.data.keyTakeaways) ? res.data.keyTakeaways : [],
+          keyDecisions: Array.isArray(res.data.keyDecisions) ? res.data.keyDecisions : [],
+          importantQuestions: Array.isArray(res.data.importantQuestions) ? res.data.importantQuestions : [],
+          actionItems: Array.isArray(res.data.actionItems) ? res.data.actionItems : []
+        }));
+      }
     } catch (err) {
-      setSummaryError('Failed to regenerate summary: ' + (err.message || 'Error communicating with AI service'));
+      setSummaryError('Failed to regenerate summary: ' + (err.message || 'Service error'));
     } finally {
       setReanalyzing(false);
     }
@@ -124,66 +213,118 @@ export const PostMeetingDetailsPage = ({ meetingIdOrCode, onBack, onNavigateKanb
 
   const handleExportMarkdown = () => {
     if (!meeting) return;
-    const content = `# Meeting Intelligence Report: ${meeting.title}
-**Date:** ${new Date(meeting.scheduledAt || meeting.createdAt).toLocaleString()}
-**Code:** ${meeting.code}
-**Duration:** ${meeting.durationMinutes || 30} minutes
+    const dateStr = safeFormatDate(meeting.scheduledAt || meeting.createdAt);
+    const content = `# Meeting Intelligence Report: ${safeString(meeting.title, 'Meeting Session')}
+**Date:** ${dateStr}
+**Code:** ${safeString(meeting.code, 'N/A')}
+**Duration:** ${meeting.durationMinutes || 1} minutes
 
 ## Executive Summary
-${meeting.summary || 'N/A'}
+${safeString(meeting.summary, 'N/A')}
 
-${meeting.topicsCovered && meeting.topicsCovered.length > 0 ? `## Topics Covered\n${meeting.topicsCovered.map(t => `- ${t}`).join('\n')}\n` : ''}
+${Array.isArray(meeting.topicsCovered) && meeting.topicsCovered.length > 0 ? `## Topics Covered\n${meeting.topicsCovered.map(t => `- ${safeString(t)}`).join('\n')}\n` : ''}
 ## Key Discussion Points
-${(meeting.keyTakeaways || []).map(t => `- ${t}`).join('\n')}
+${(Array.isArray(meeting.keyTakeaways) ? meeting.keyTakeaways : []).map(t => `- ${safeString(t)}`).join('\n')}
 
-${meeting.keyDecisions && meeting.keyDecisions.length > 0 ? `## Key Decisions Made\n${meeting.keyDecisions.map(d => `- ${d}`).join('\n')}\n` : ''}
-${meeting.importantQuestions && meeting.importantQuestions.length > 0 ? `## Important Questions\n${meeting.importantQuestions.map(q => `- ${q}`).join('\n')}\n` : ''}
+${Array.isArray(meeting.keyDecisions) && meeting.keyDecisions.length > 0 ? `## Key Decisions Made\n${meeting.keyDecisions.map(d => `- ${safeString(d)}`).join('\n')}\n` : ''}
+${Array.isArray(meeting.importantQuestions) && meeting.importantQuestions.length > 0 ? `## Important Questions\n${meeting.importantQuestions.map(q => `- ${safeString(q)}`).join('\n')}\n` : ''}
 ## Extracted Action Items
-${(meeting.actionItems || []).map(a => `- [ ] **${a.task}** (Assignee: ${a.assignee}, Priority: ${a.priority}, Due: ${new Date(a.dueDate).toLocaleDateString()})`).join('\n')}
+${(Array.isArray(meeting.actionItems) ? meeting.actionItems : []).map((a, i) => {
+  const d = getActionItemDetails(a, i);
+  return `- [ ] **${d.task}** (Assignee: ${d.assignee}, Priority: ${d.priority}, Due: ${d.dueDate})`;
+}).join('\n')}
 
 ## Full Transcript
-${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.text}`).join('\n')}
+${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${safeString(t?.timestamp, '')}] **${safeString(t?.speaker, 'Speaker')}:** ${safeString(t?.text, '')}`).join('\n')}
 `;
 
     const blob = new Blob([content], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Meeting_Summary_${meeting.code}.md`;
+    a.download = `Meeting_Summary_${safeString(meeting.code, 'meeting')}.md`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
+  // ----------------------------------------------------
+  // LOADING STATE
+  // ----------------------------------------------------
   if (loading) {
     return (
-      <div style={{ maxWidth: '1000px', margin: '60px auto', textAlign: 'center', color: '#64748b' }}>
-        <RefreshCw size={28} className="animate-spin" style={{ margin: '0 auto 16px', color: '#4f46e5' }} />
-        <p style={{ fontSize: '1rem', fontWeight: 500 }}>Loading AI Meeting Intelligence...</p>
+      <div style={{ maxWidth: '900px', margin: '80px auto', textAlign: 'center', color: '#64748b' }}>
+        <RefreshCw size={32} className="animate-spin" style={{ margin: '0 auto 16px', color: '#4f46e5' }} />
+        <h3 style={{ fontSize: '1.25rem', color: '#0f172a', fontWeight: 700, marginBottom: '6px' }}>
+          Loading AI Meeting Intelligence...
+        </h3>
+        <p style={{ fontSize: '0.92rem', color: '#64748b' }}>
+          Retrieving session dialogue, transcript, and decisions.
+        </p>
       </div>
     );
   }
 
+  // ----------------------------------------------------
+  // ERROR / NOT FOUND STATE
+  // ----------------------------------------------------
   if (!meeting) {
     return (
-      <div style={{ maxWidth: '800px', margin: '60px auto', textAlign: 'center' }}>
-        <h2 style={{ color: '#0f172a', fontWeight: 700 }}>Meeting details not found</h2>
-        <p style={{ color: '#64748b', marginTop: '8px' }}>The requested meeting code ({meetingIdOrCode}) could not be retrieved.</p>
-        <button onClick={onBack} className="btn btn-secondary" style={{ marginTop: '16px' }}>
-          Back to Dashboard
-        </button>
+      <div style={{ maxWidth: '680px', margin: '80px auto', textAlign: 'center', padding: '0 20px' }}>
+        <div style={{
+          background: '#ffffff',
+          borderRadius: '16px',
+          padding: '40px 32px',
+          border: '1px solid #e2e8f0',
+          boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)'
+        }}>
+          <AlertCircle size={40} color="#f59e0b" style={{ margin: '0 auto 16px' }} />
+          <h2 style={{ color: '#0f172a', fontWeight: 800, fontSize: '1.4rem', marginBottom: '8px' }}>
+            Meeting Details Not Found
+          </h2>
+          <p style={{ color: '#64748b', fontSize: '0.92rem', marginBottom: '24px', lineHeight: 1.5 }}>
+            {summaryError || `The meeting details for "${meetingIdOrCode}" could not be retrieved from the server.`}
+          </p>
+          <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+            <button onClick={loadMeetingDetails} className="btn btn-primary" style={{ fontSize: '0.88rem' }}>
+              <RefreshCw size={15} />
+              <span>Retry</span>
+            </button>
+            <button onClick={onBack} className="btn btn-secondary" style={{ fontSize: '0.88rem' }}>
+              <ArrowLeft size={15} />
+              <span>Back to Dashboard</span>
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
 
-  const filteredTranscript = (meeting.transcript || []).filter(t => 
-    (t.text || '').toLowerCase().includes(searchTerm.toLowerCase()) || 
-    (t.speaker || '').toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Safe normalized variables
+  const meetingTitle = safeString(meeting.title, 'Meeting Session');
+  const meetingCode = safeString(meeting.code, meetingIdOrCode);
+  const meetingDescription = safeString(meeting.description, 'Enterprise collaboration session with automated AI speech intelligence.');
+  const meetingDuration = meeting.durationMinutes || 1;
+  const meetingDate = safeFormatDate(meeting.scheduledAt || meeting.createdAt);
+  const participantsCount = Array.isArray(meeting.participants) ? meeting.participants.length : 1;
+
+  const topicsList = Array.isArray(meeting.topicsCovered) ? meeting.topicsCovered : [];
+  const takeawaysList = Array.isArray(meeting.keyTakeaways) ? meeting.keyTakeaways : [];
+  const decisionsList = Array.isArray(meeting.keyDecisions) ? meeting.keyDecisions : [];
+  const questionsList = Array.isArray(meeting.importantQuestions) ? meeting.importantQuestions : [];
+  const actionItemsList = Array.isArray(meeting.actionItems) ? meeting.actionItems : [];
+  const rawTranscriptList = Array.isArray(meeting.transcript) ? meeting.transcript : [];
+
+  const filteredTranscript = rawTranscriptList.filter(t => {
+    if (!t) return false;
+    const text = safeString(t.text || (typeof t === 'string' ? t : ''));
+    const speaker = safeString(t.speaker, '');
+    return text.toLowerCase().includes(searchTerm.toLowerCase()) || speaker.toLowerCase().includes(searchTerm.toLowerCase());
+  });
 
   return (
     <div style={{ maxWidth: '1180px', margin: '0 auto', padding: '32px 24px 80px' }}>
       
-      {/* Back button & Action Bar */}
+      {/* Top Action Bar */}
       <div style={{
         display: 'flex',
         flexWrap: 'wrap',
@@ -195,7 +336,7 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
         <button 
           onClick={onBack}
           className="btn btn-secondary"
-          style={{ padding: '8px 14px', fontSize: '0.85rem' }}
+          style={{ padding: '8px 16px', fontSize: '0.88rem' }}
         >
           <ArrowLeft size={16} />
           <span>Back to Dashboard</span>
@@ -232,7 +373,7 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
         </div>
       </div>
 
-      {/* Action Notification Notice */}
+      {/* Action Notification */}
       {actionNotice && (
         <div style={{
           background: '#ecfdf5',
@@ -251,7 +392,7 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
         </div>
       )}
 
-      {/* AI Intelligence In-Progress Loading Indicator */}
+      {/* Reanalyzing Indicator */}
       {reanalyzing && (
         <div style={{
           background: '#eef2ff',
@@ -267,11 +408,11 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
           fontWeight: 600
         }}>
           <Sparkles size={18} className="animate-spin" />
-          <span>IntellMeet AI is analyzing the actual transcript, extracting decisions, questions, and action items...</span>
+          <span>IntellMeet AI is analyzing the actual transcript and deriving fresh intelligence...</span>
         </div>
       )}
 
-      {/* AI Generation Error State */}
+      {/* Error Alert */}
       {summaryError && (
         <div style={{
           background: '#fef2f2',
@@ -305,35 +446,35 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <span className="badge badge-ended">AI Analyzed Session</span>
             <span style={{ fontSize: '0.82rem', color: '#64748b' }}>
-              Code: <code style={{ color: '#4f46e5', fontWeight: 600, background: '#eef2ff', padding: '2px 6px', borderRadius: '4px' }}>{meeting.code}</code>
+              Code: <code style={{ color: '#4f46e5', fontWeight: 600, background: '#eef2ff', padding: '2px 6px', borderRadius: '4px' }}>{meetingCode}</code>
             </span>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px', fontSize: '0.85rem', color: '#64748b' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <Calendar size={15} color="#4f46e5" />
-              {new Date(meeting.scheduledAt || meeting.createdAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}
+              {meetingDate}
             </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <Clock size={15} color="#4f46e5" />
-              {meeting.durationMinutes || 1} min{meeting.durationMinutes === 1 ? '' : 's'}
+              {meetingDuration} min{meetingDuration === 1 ? '' : 's'}
             </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <Users size={15} color="#4f46e5" />
-              {(meeting.participants || []).length || 1} participant{((meeting.participants || []).length || 1) > 1 ? 's' : ''}
+              {participantsCount} participant{participantsCount > 1 ? 's' : ''}
             </span>
           </div>
         </div>
 
         <h1 style={{ fontSize: '1.85rem', color: '#0f172a', fontWeight: 800, marginBottom: '8px' }}>
-          {meeting.title}
+          {meetingTitle}
         </h1>
         <p style={{ color: '#64748b', fontSize: '0.95rem', maxWidth: '850px', margin: 0 }}>
-          {meeting.description || 'Enterprise collaboration session with automated AI speech intelligence.'}
+          {meetingDescription}
         </p>
       </div>
 
-      {/* Navigation Tabs */}
+      {/* Tab Navigation */}
       <div style={{
         display: 'flex',
         borderBottom: '1px solid #e2e8f0',
@@ -342,8 +483,8 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
       }}>
         {[
           { id: 'summary', label: 'AI Executive Summary & Insights', icon: Sparkles },
-          { id: 'actions', label: `Action Items (${(meeting.actionItems || []).length})`, icon: CheckCircle2 },
-          { id: 'transcript', label: `Transcript (${(meeting.transcript || []).length} turns)`, icon: Users }
+          { id: 'actions', label: `Action Items (${actionItemsList.length})`, icon: CheckCircle2 },
+          { id: 'transcript', label: `Transcript (${rawTranscriptList.length} turns)`, icon: Users }
         ].map(tab => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -373,7 +514,9 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
         })}
       </div>
 
-      {/* TAB 1: AI Executive Summary & Insights */}
+      {/* ==================================================== */}
+      {/* TAB 1: EXECUTIVE SUMMARY & INSIGHTS */}
+      {/* ==================================================== */}
       {activeTab === 'summary' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           
@@ -406,19 +549,19 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
               border: '1px solid #e2e8f0',
               margin: 0
             }}>
-              {meeting.summary || 'Summary is being processed...'}
+              {safeString(meeting.summary, 'Summary generation in progress or no dialogue was recorded.')}
             </p>
           </div>
 
           {/* Topics Covered */}
-          {meeting.topicsCovered && meeting.topicsCovered.length > 0 && (
+          {topicsList.length > 0 && (
             <div className="glass-panel" style={{ padding: '24px 28px', borderRadius: '18px', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.05)' }}>
               <h3 style={{ fontSize: '1.1rem', color: '#0f172a', fontWeight: 700, marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Layers size={18} color="#4f46e5" />
                 <span>Topics Covered</span>
               </h3>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                {meeting.topicsCovered.map((topic, i) => (
+                {topicsList.map((topic, i) => (
                   <span key={i} style={{
                     padding: '6px 14px',
                     borderRadius: '20px',
@@ -428,7 +571,7 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
                     fontWeight: 600,
                     color: '#334155'
                   }}>
-                    {topic}
+                    {safeString(topic)}
                   </span>
                 ))}
               </div>
@@ -443,37 +586,43 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
             </h3>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {(meeting.keyTakeaways || []).map((takeaway, idx) => (
-                <div 
-                  key={idx}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: '12px',
-                    padding: '14px 16px',
-                    borderRadius: '10px',
-                    background: '#f8fafc',
-                    border: '1px solid #e2e8f0'
-                  }}
-                >
-                  <span style={{ color: '#4f46e5', fontWeight: 800, marginTop: '1px' }}>•</span>
-                  <span style={{ fontSize: '0.92rem', color: '#334155', lineHeight: 1.5 }}>
-                    {takeaway}
-                  </span>
-                </div>
-              ))}
+              {takeawaysList.length === 0 ? (
+                <p style={{ color: '#64748b', fontSize: '0.9rem', margin: 0 }}>
+                  No discussion points extracted. Record live speech or use chat during meetings to generate AI insights.
+                </p>
+              ) : (
+                takeawaysList.map((takeaway, idx) => (
+                  <div 
+                    key={idx}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: '12px',
+                      padding: '14px 16px',
+                      borderRadius: '10px',
+                      background: '#f8fafc',
+                      border: '1px solid #e2e8f0'
+                    }}
+                  >
+                    <span style={{ color: '#4f46e5', fontWeight: 800, marginTop: '1px' }}>•</span>
+                    <span style={{ fontSize: '0.92rem', color: '#334155', lineHeight: 1.5 }}>
+                      {safeString(takeaway)}
+                    </span>
+                  </div>
+                ))
+              )}
             </div>
           </div>
 
           {/* Decisions Made */}
-          {meeting.keyDecisions && meeting.keyDecisions.length > 0 && (
+          {decisionsList.length > 0 && (
             <div className="glass-panel" style={{ padding: '24px 28px', borderRadius: '18px', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.05)' }}>
               <h3 style={{ fontSize: '1.1rem', color: '#0f172a', fontWeight: 700, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <Award size={18} color="#059669" />
                 <span>Decisions Made</span>
               </h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {meeting.keyDecisions.map((decision, idx) => (
+                {decisionsList.map((decision, idx) => (
                   <div key={idx} style={{
                     display: 'flex',
                     alignItems: 'flex-start',
@@ -486,7 +635,7 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
                     color: '#166534'
                   }}>
                     <CheckCircle2 size={16} color="#16a34a" style={{ flexShrink: 0, marginTop: '2px' }} />
-                    <span>{decision}</span>
+                    <span>{safeString(decision)}</span>
                   </div>
                 ))}
               </div>
@@ -494,14 +643,14 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
           )}
 
           {/* Important Questions Raised */}
-          {meeting.importantQuestions && meeting.importantQuestions.length > 0 && (
+          {questionsList.length > 0 && (
             <div className="glass-panel" style={{ padding: '24px 28px', borderRadius: '18px', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.05)' }}>
               <h3 style={{ fontSize: '1.1rem', color: '#0f172a', fontWeight: 700, marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <HelpCircle size={18} color="#d97706" />
-                <span>Important Questions & Issues Raised</span>
+                <span>Important Questions & Inquiries</span>
               </h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {meeting.importantQuestions.map((q, idx) => (
+                {questionsList.map((q, idx) => (
                   <div key={idx} style={{
                     display: 'flex',
                     alignItems: 'flex-start',
@@ -514,7 +663,7 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
                     color: '#92400e'
                   }}>
                     <HelpCircle size={16} color="#d97706" style={{ flexShrink: 0, marginTop: '2px' }} />
-                    <span>{q}</span>
+                    <span>{safeString(q)}</span>
                   </div>
                 ))}
               </div>
@@ -522,12 +671,12 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
           )}
 
           {/* Action Items Quick Preview */}
-          {meeting.actionItems && meeting.actionItems.length > 0 && (
+          {actionItemsList.length > 0 && (
             <div className="glass-panel" style={{ padding: '24px 28px', borderRadius: '18px', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.05)' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
                 <h3 style={{ fontSize: '1.1rem', color: '#0f172a', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <KanbanSquare size={18} color="#4f46e5" />
-                  <span>Action Items & Deliverables ({meeting.actionItems.length})</span>
+                  <span>Action Items & Deliverables ({actionItemsList.length})</span>
                 </h3>
                 <button
                   onClick={() => setActiveTab('actions')}
@@ -539,30 +688,33 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {meeting.actionItems.slice(0, 3).map((item) => (
-                  <div key={item.id} style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: '12px',
-                    padding: '12px 16px',
-                    borderRadius: '10px',
-                    background: '#f8fafc',
-                    border: '1px solid #e2e8f0'
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span className={`badge badge-priority-${item.priority || 'medium'}`} style={{ textTransform: 'capitalize' }}>
-                        {item.priority}
-                      </span>
-                      <span style={{ fontSize: '0.92rem', color: '#0f172a', fontWeight: 600 }}>
-                        {item.task}
+                {actionItemsList.slice(0, 3).map((rawItem, idx) => {
+                  const item = getActionItemDetails(rawItem, idx);
+                  return (
+                    <div key={item.id} style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '12px',
+                      padding: '12px 16px',
+                      borderRadius: '10px',
+                      background: '#f8fafc',
+                      border: '1px solid #e2e8f0'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span className={`badge badge-priority-${item.priority}`} style={{ textTransform: 'capitalize' }}>
+                          {item.priority}
+                        </span>
+                        <span style={{ fontSize: '0.92rem', color: '#0f172a', fontWeight: 600 }}>
+                          {item.task}
+                        </span>
+                      </div>
+                      <span style={{ fontSize: '0.82rem', color: '#64748b' }}>
+                        Owner: {item.assignee}
                       </span>
                     </div>
-                    <span style={{ fontSize: '0.82rem', color: '#64748b' }}>
-                      Owner: {item.assignee || 'Team'}
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -570,13 +722,15 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
         </div>
       )}
 
-      {/* TAB 2: Smart Action Items */}
+      {/* ==================================================== */}
+      {/* TAB 2: SMART ACTION ITEMS */}
+      {/* ==================================================== */}
       {activeTab === 'actions' && (
         <div className="glass-panel" style={{ padding: '28px', borderRadius: '18px', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.05)' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '20px' }}>
             <div>
               <h2 style={{ fontSize: '1.25rem', color: '#0f172a', fontWeight: 700, marginBottom: '4px' }}>
-                Extracted Action Items ({meeting.actionItems?.length || 0})
+                Extracted Action Items ({actionItemsList.length})
               </h2>
               <p style={{ fontSize: '0.85rem', color: '#64748b', margin: 0 }}>
                 Automatically derived commitments with designated owners and urgency levels
@@ -584,7 +738,7 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
             </div>
 
             <button 
-              onClick={() => onNavigateKanban()}
+              onClick={() => onNavigateKanban && onNavigateKanban()}
               className="btn btn-secondary"
               style={{ fontSize: '0.85rem' }}
             >
@@ -594,13 +748,14 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            {(meeting.actionItems || []).length === 0 ? (
+            {actionItemsList.length === 0 ? (
               <p style={{ color: '#64748b', textAlign: 'center', padding: '30px', margin: 0 }}>
                 No action items were identified in this meeting discussion.
               </p>
             ) : (
-              (meeting.actionItems || []).map((item) => {
-                const isConverted = convertedTasks.has(item.id) || !!item.taskId;
+              actionItemsList.map((rawItem, idx) => {
+                const item = getActionItemDetails(rawItem, idx);
+                const isConverted = convertedTasks.has(item.id) || !!rawItem?.taskId;
 
                 return (
                   <div
@@ -620,12 +775,12 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
                   >
                     <div style={{ flex: 1, minWidth: '280px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                        <span className={`badge badge-priority-${item.priority || 'medium'}`}>
+                        <span className={`badge badge-priority-${item.priority}`} style={{ textTransform: 'capitalize' }}>
                           {item.priority}
                         </span>
                         <span style={{ fontSize: '0.78rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px' }}>
                           <Clock size={12} />
-                          Due: {new Date(item.dueDate || Date.now() + 86400000 * 3).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                          Due: {item.dueDate}
                         </span>
                       </div>
 
@@ -635,7 +790,7 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
 
                       <div style={{ fontSize: '0.8rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '6px' }}>
                         <Users size={13} color="#4f46e5" />
-                        <span>Owner: <strong style={{ color: '#0f172a' }}>{item.assignee || 'Engineering Team'}</strong></span>
+                        <span>Owner: <strong style={{ color: '#0f172a' }}>{item.assignee}</strong></span>
                       </div>
                     </div>
 
@@ -676,7 +831,9 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
         </div>
       )}
 
-      {/* TAB 3: Full Timestamped Transcript */}
+      {/* ==================================================== */}
+      {/* TAB 3: VERBATIM TRANSCRIPT */}
+      {/* ==================================================== */}
       {activeTab === 'transcript' && (
         <div className="glass-panel" style={{ padding: '28px', borderRadius: '18px', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.05)' }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '24px' }}>
@@ -709,37 +866,45 @@ ${(meeting.transcript || []).map(t => `[${t.timestamp}] **${t.speaker}:** ${t.te
                 {searchTerm ? `No transcript turns matching "${searchTerm}"` : 'No verbal speech was captured during this session.'}
               </p>
             ) : (
-              filteredTranscript.map((line, idx) => (
-                <div 
-                  key={idx}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    gap: '14px',
-                    padding: '14px 16px',
-                    borderRadius: '10px',
-                    background: '#f8fafc',
-                    border: '1px solid #e2e8f0'
-                  }}
-                >
-                  <img
-                    src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${line.speaker}`}
-                    alt={line.speaker}
-                    style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
-                  />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                      <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#0f172a' }}>{line.speaker}</span>
-                      <span style={{ fontSize: '0.72rem', color: '#64748b', fontFamily: 'monospace' }}>
-                        {line.timestamp}
-                      </span>
+              filteredTranscript.map((rawLine, idx) => {
+                const speaker = safeString(rawLine?.speaker, 'Speaker');
+                const text = safeString(rawLine?.text || (typeof rawLine === 'string' ? rawLine : ''));
+                const timestamp = safeString(rawLine?.timestamp, '');
+
+                return (
+                  <div 
+                    key={idx}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: '14px',
+                      padding: '14px 16px',
+                      borderRadius: '10px',
+                      background: '#f8fafc',
+                      border: '1px solid #e2e8f0'
+                    }}
+                  >
+                    <img
+                      src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(speaker)}`}
+                      alt={speaker}
+                      style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+                    />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                        <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#0f172a' }}>{speaker}</span>
+                        {timestamp && (
+                          <span style={{ fontSize: '0.72rem', color: '#64748b', fontFamily: 'monospace' }}>
+                            {timestamp}
+                          </span>
+                        )}
+                      </div>
+                      <p style={{ fontSize: '0.9rem', color: '#334155', lineHeight: 1.5, margin: 0 }}>
+                        {text}
+                      </p>
                     </div>
-                    <p style={{ fontSize: '0.9rem', color: '#334155', lineHeight: 1.5, margin: 0 }}>
-                      {line.text}
-                    </p>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
