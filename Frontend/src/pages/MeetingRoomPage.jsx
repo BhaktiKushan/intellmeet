@@ -109,6 +109,145 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   const speechAnalyserAudioCtxRef = useRef(null);
   const speechAnimFrameRef = useRef(null);
 
+  // Synchronized Transcript & Chat History Refs for AI Summary Generation
+  const transcriptLogRef = useRef([]);
+  const chatMessagesRef = useRef([]);
+  const isSpeechRecognitionActiveRef = useRef(true);
+  const isCleaningUpRef = useRef(false);
+
+  // ----------------------------------------------------
+  // Instant Media and Connection Termination (Camera, Mic, WebRTC)
+  // ----------------------------------------------------
+  const terminateAllMediaAndConnections = useCallback(() => {
+    isSpeechRecognitionActiveRef.current = false;
+    isCleaningUpRef.current = true;
+    // 1. Stop all tracks in localStreamRef immediately to turn off camera & mic hardware lights
+    if (localStreamRef.current) {
+      try {
+        localStreamRef.current.getTracks().forEach(track => {
+          try {
+            track.enabled = false;
+            track.stop();
+          } catch (e) {}
+        });
+      } catch (e) {}
+      localStreamRef.current = null;
+    }
+
+    if (originalCameraTrackRef.current) {
+      try {
+        originalCameraTrackRef.current.enabled = false;
+        originalCameraTrackRef.current.stop();
+      } catch (e) {}
+      originalCameraTrackRef.current = null;
+    }
+
+    // 2. Stop any active screen sharing tracks
+    if (screenShareTrackRef.current) {
+      try {
+        screenShareTrackRef.current.enabled = false;
+        screenShareTrackRef.current.stop();
+      } catch (e) {}
+      screenShareTrackRef.current = null;
+    }
+
+    // 3. Stop recording recorder and canvas loop
+    if (recordingMediaRecorderRef.current && recordingMediaRecorderRef.current.state !== 'inactive') {
+      try {
+        recordingMediaRecorderRef.current.stop();
+      } catch (e) {}
+      recordingMediaRecorderRef.current = null;
+    }
+    if (recordingAnimFrameRef.current) {
+      try { cancelAnimationFrame(recordingAnimFrameRef.current); } catch (e) {}
+      recordingAnimFrameRef.current = null;
+    }
+
+    // 4. Close Web Audio contexts
+    if (speechAnalyserAudioCtxRef.current && speechAnalyserAudioCtxRef.current.state !== 'closed') {
+      try { speechAnalyserAudioCtxRef.current.close(); } catch (e) {}
+      speechAnalyserAudioCtxRef.current = null;
+    }
+    if (recordingAudioCtxRef.current && recordingAudioCtxRef.current.state !== 'closed') {
+      try { recordingAudioCtxRef.current.close(); } catch (e) {}
+      recordingAudioCtxRef.current = null;
+    }
+
+    // 5. Stop speech recognition
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch (e) {}
+      recognitionRef.current = null;
+    }
+
+    // 6. Close all WebRTC peer connections and release track senders
+    if (peersRef.current) {
+      Object.values(peersRef.current).forEach(pc => {
+        try {
+          if (pc.getSenders) {
+            pc.getSenders().forEach(sender => {
+              if (sender.track) {
+                try {
+                  sender.track.enabled = false;
+                  sender.track.stop();
+                } catch (e) {}
+              }
+            });
+          }
+          pc.close();
+        } catch (e) {}
+      });
+      peersRef.current = {};
+    }
+
+    // 7. Clear all HTML media elements (releases browser hardware handles)
+    try {
+      document.querySelectorAll('video, audio').forEach(mediaEl => {
+        if (mediaEl.srcObject) {
+          try {
+            if (mediaEl.srcObject.getTracks) {
+              mediaEl.srcObject.getTracks().forEach(t => {
+                t.enabled = false;
+                t.stop();
+              });
+            }
+          } catch (e) {}
+          mediaEl.srcObject = null;
+        }
+      });
+    } catch (e) {}
+
+    // 8. Disconnect WebSocket signaling
+    if (socketRef.current) {
+      try {
+        socketRef.current.emit('leave-room');
+        socketRef.current.disconnect();
+      } catch (e) {}
+      socketRef.current = null;
+    }
+
+    // 9. Reset state
+    setLocalStream(null);
+    setScreenShareStream(null);
+  }, []);
+
+  // Guarantee cleanup on page navigation, tab close, back/forward, and component unmount
+  useEffect(() => {
+    const handleCleanup = () => {
+      terminateAllMediaAndConnections();
+    };
+
+    window.addEventListener('beforeunload', handleCleanup);
+    window.addEventListener('pagehide', handleCleanup);
+    window.addEventListener('popstate', handleCleanup);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleCleanup);
+      window.removeEventListener('pagehide', handleCleanup);
+      window.removeEventListener('popstate', handleCleanup);
+      terminateAllMediaAndConnections();
+    };
+  }, [terminateAllMediaAndConnections]);
+
   // Keep stream refs updated and sync tracks to peer connections
   useEffect(() => {
     localStreamRef.current = localStream;
@@ -719,6 +858,11 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
       handleLeaveOrEnd();
     });
 
+    socket.on('meeting-ended-by-host', () => {
+      alert('The meeting was ended by the host.');
+      handleLeaveOrEnd();
+    });
+
     // Host actions: Settings updated
     socket.on('meeting-settings-updated', (settings) => {
       if (settings?.allowScreenShare !== undefined) {
@@ -772,7 +916,11 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
 
     // Chat received
     socket.on('receive-chat', (message) => {
-      setChatMessages(prev => [...prev, message]);
+      setChatMessages(prev => {
+        const next = [...prev, message];
+        chatMessagesRef.current = next;
+        return next;
+      });
       if (activeTab !== 'chat') {
         setUnreadChatCount(prev => prev + 1);
       }
@@ -781,7 +929,11 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
     // Live AI Speech-to-Text transcript
     socket.on('transcript-update', (item) => {
       setLatestTranscript(item);
-      setTranscriptLog(prev => [...prev, item]);
+      setTranscriptLog(prev => {
+        const next = [...prev, item];
+        transcriptLogRef.current = next;
+        return next;
+      });
     });
 
     // Start Web Speech API transcription
@@ -809,12 +961,31 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
               timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
             };
             setLatestTranscript(transcriptItem);
-            setTranscriptLog(prev => [...prev, transcriptItem]);
+            setTranscriptLog(prev => {
+              const next = [...prev, transcriptItem];
+              transcriptLogRef.current = next;
+              return next;
+            });
             socket.emit('live-transcript', { roomId, item: transcriptItem });
           }
         };
 
-        recognition.onerror = () => {};
+        recognition.onend = () => {
+          if (isSpeechRecognitionActiveRef.current && !isCleaningUpRef.current) {
+            try {
+              recognition.start();
+            } catch (err) {
+              // Ignore if already listening
+            }
+          }
+        };
+
+        recognition.onerror = (err) => {
+          if (err.error !== 'no-speech' && err.error !== 'aborted') {
+            console.warn('[SpeechRecognition] Engine event:', err.error);
+          }
+        };
+
         recognition.start();
         recognitionRef.current = recognition;
       } catch (err) {
@@ -1258,33 +1429,15 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
   // End / Leave Meeting
   // ----------------------------------------------------
   const handleLeaveOrEnd = async () => {
-    if (isRecording) {
-      stopRecording();
-    }
-    if (screenShareTrackRef.current) {
-      screenShareTrackRef.current.stop();
-    }
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop(); } catch (e) {}
-    }
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(t => t.stop());
-    }
-
-    Object.values(peersRef.current).forEach(pc => pc.close());
-    peersRef.current = {};
-
-    if (socketRef.current) {
-      socketRef.current.emit('leave-room');
-      socketRef.current.disconnect();
-    }
+    // 1. Immediately stop camera, microphone, screen share, and WebRTC connections
+    terminateAllMediaAndConnections();
 
     const targetMeetingId = meeting?._id || roomId;
     if (targetMeetingId) {
       try {
         await api.endMeeting(targetMeetingId, {
-          transcript: transcriptLog,
-          chatMessages
+          transcript: transcriptLogRef.current.length > 0 ? transcriptLogRef.current : transcriptLog,
+          chatMessages: chatMessagesRef.current.length > 0 ? chatMessagesRef.current : chatMessages
         });
       } catch (err) {
         console.warn('[Leave Call] End meeting sync note:', err);
@@ -1325,7 +1478,10 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary }) => {
         onSelectAudioOutputDevice={(id) => setSelectedAudioOutputDeviceId(id)}
         permissionError={permissionError}
         onJoin={handleJoinMeeting}
-        onCancel={onLeaveRoom}
+        onCancel={() => {
+          terminateAllMediaAndConnections();
+          onLeaveRoom();
+        }}
       />
     );
   }

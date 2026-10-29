@@ -36,6 +36,50 @@ test('IntellMeet Complete Enterprise Test Suite', async (suite) => {
       authToken = body.data.accessToken;
     });
 
+    await t.test('2b. Auth register & login flow succeeds', async () => {
+      const testEmail = `testuser_${Date.now()}@example.com`;
+      const res = await fetch(`${SERVER_URL}/api/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Jordan Smith',
+          email: testEmail,
+          password: 'Password123!'
+        })
+      });
+      assert.equal(res.status, 201);
+      const body = await res.json();
+      assert.equal(body.success, true);
+      assert.ok(body.data.accessToken, 'Access token should be returned');
+      assert.equal(body.data.email, testEmail);
+      assert.equal(body.data.name, 'Jordan Smith');
+
+      // Test Login with newly registered user
+      const loginRes = await fetch(`${SERVER_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: testEmail,
+          password: 'Password123!'
+        })
+      });
+      assert.equal(loginRes.status, 200);
+      const loginBody = await loginRes.json();
+      assert.equal(loginBody.success, true);
+      assert.ok(loginBody.data.accessToken);
+
+      // Test Login with invalid password
+      const badLoginRes = await fetch(`${SERVER_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: testEmail,
+          password: 'WrongPassword!'
+        })
+      });
+      assert.equal(badLoginRes.status, 401);
+    });
+
     await t.test('3. Auth /me endpoint returns authenticated user profile', async () => {
       const res = await fetch(`${SERVER_URL}/api/auth/me`, {
         headers: { Authorization: `Bearer ${authToken}` }
@@ -100,15 +144,43 @@ test('IntellMeet Complete Enterprise Test Suite', async (suite) => {
       assert.equal(body.data.durationMinutes, 12);
     });
 
-    await t.test('7. End meeting and trigger summary', async () => {
+    await t.test('7. End meeting and trigger AI summary with actual transcript', async () => {
+      const realisticTranscript = [
+        { speaker: 'Alice Chen', text: 'Good morning everyone. Today we need to decide on our deployment architecture for Version 2.', timestamp: '10:00:00 AM' },
+        { speaker: 'Bob Smith', text: 'I recommend we deploy the new authentication microservice using Docker and Kubernetes.', timestamp: '10:00:45 AM' },
+        { speaker: 'Carol Danvers', text: 'Agreed, we will proceed with Kubernetes. What is our deadline for the migration?', timestamp: '10:01:20 AM' },
+        { speaker: 'Alice Chen', text: 'We agreed the migration deadline is Friday at 5 PM. Bob, will you finish the database scripts?', timestamp: '10:01:50 AM' },
+        { speaker: 'Bob Smith', text: 'Yes, I will finalize the database migration scripts by Thursday.', timestamp: '10:02:15 AM' }
+      ];
+
       const res = await fetch(`${SERVER_URL}/api/meetings/${testMeetingCode}/end`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${authToken}` }
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          transcript: realisticTranscript
+        })
       });
       assert.equal(res.status, 200);
       const body = await res.json();
       assert.equal(body.success, true);
       assert.equal(body.data.status, 'ended');
+      assert.ok(body.data.summary, 'Summary should be generated');
+      assert.ok(body.data.summary.length > 20, 'Summary should be substantial');
+      assert.ok(Array.isArray(body.data.keyTakeaways), 'keyTakeaways should be an array');
+      assert.ok(body.data.keyTakeaways.length > 0, 'keyTakeaways should have points');
+      assert.ok(Array.isArray(body.data.actionItems), 'actionItems should be an array');
+      assert.ok(body.data.actionItems.length > 0, 'actionItems should have items');
+
+      // Verify that fetching the meeting returns the saved summary
+      const getRes = await fetch(`${SERVER_URL}/api/meetings/${testMeetingCode}`, {
+        headers: { Authorization: `Bearer ${authToken}` }
+      });
+      assert.equal(getRes.status, 200);
+      const getBody = await getRes.json();
+      assert.equal(getBody.data.summary, body.data.summary, 'Summary must be persisted in database');
     });
 
     await t.test('8. Retrieve user tasks (Kanban)', async () => {

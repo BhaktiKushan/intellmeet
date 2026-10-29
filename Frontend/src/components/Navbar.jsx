@@ -6,18 +6,15 @@ import {
   KanbanSquare, 
   BarChart3, 
   FileText, 
-  Plus, 
   LogOut, 
   User as UserIcon, 
   ShieldCheck, 
-  Zap,
-  Sparkles,
-  Menu,
-  X
+  Menu, 
+  X 
 } from 'lucide-react';
 
-export const Navbar = ({ activeTab, setActiveTab, onQuickNewMeeting }) => {
-  const { user, isAuthenticated, logout, demoLogin } = useAuth();
+export const Navbar = ({ activeTab, setActiveTab }) => {
+  const { user, isAuthenticated, logout } = useAuth();
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -34,14 +31,15 @@ export const Navbar = ({ activeTab, setActiveTab, onQuickNewMeeting }) => {
       position: 'sticky',
       top: 0,
       zIndex: 50,
-      background: 'rgba(8, 12, 20, 0.85)',
+      background: 'rgba(255, 255, 255, 0.95)',
       backdropFilter: 'blur(20px)',
-      borderBottom: '1px solid var(--border-subtle)',
+      borderBottom: '1px solid #e2e8f0',
       padding: '0 24px',
       height: '68px',
       display: 'flex',
       alignItems: 'center',
-      justifyContent: 'space-between'
+      justifyContent: 'space-between',
+      boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.05)'
     }}>
       {/* Brand Logo */}
       <div 
@@ -57,11 +55,11 @@ export const Navbar = ({ activeTab, setActiveTab, onQuickNewMeeting }) => {
           width: '38px',
           height: '38px',
           borderRadius: '10px',
-          background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)',
+          background: 'linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          boxShadow: '0 0 16px rgba(99, 102, 241, 0.45)'
+          boxShadow: '0 4px 12px rgba(79, 70, 229, 0.25)'
         }}>
           <Video size={20} color="#ffffff" />
         </div>
@@ -72,12 +70,12 @@ export const Navbar = ({ activeTab, setActiveTab, onQuickNewMeeting }) => {
               fontSize: '1.25rem',
               fontWeight: 800,
               letterSpacing: '-0.02em',
-              color: '#ffffff'
+              color: '#0f172a'
             }}>
-              Intell<span style={{ color: '#818cf8' }}>Meet</span>
+              Intell<span style={{ color: '#4f46e5' }}>Meet</span>
             </span>
           </div>
-          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', display: 'block', marginTop: '-2px' }}>
+          <span style={{ fontSize: '0.7rem', color: '#64748b', display: 'block', marginTop: '-2px' }}>
             Enterprise Meeting Intelligence
           </span>
         </div>
@@ -85,7 +83,7 @@ export const Navbar = ({ activeTab, setActiveTab, onQuickNewMeeting }) => {
 
       {/* Navigation Links (Desktop) */}
       {isAuthenticated && (
-        <nav className="navbar-desktop-links" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+        <nav className="navbar-desktop-links" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;
@@ -100,14 +98,14 @@ export const Navbar = ({ activeTab, setActiveTab, onQuickNewMeeting }) => {
                   padding: '8px 14px',
                   borderRadius: '8px',
                   border: 'none',
-                  background: isActive ? 'rgba(99, 102, 241, 0.15)' : 'transparent',
-                  color: isActive ? '#a5b4fc' : 'var(--text-muted)',
+                  background: isActive ? 'rgba(79, 70, 229, 0.08)' : 'transparent',
+                  color: isActive ? '#4f46e5' : '#64748b',
                   fontFamily: 'var(--font-body)',
                   fontWeight: isActive ? 600 : 500,
                   fontSize: '0.88rem',
                   cursor: 'pointer',
                   transition: 'all 0.15s ease',
-                  borderBottom: isActive ? '2px solid #6366f1' : '2px solid transparent'
+                  borderBottom: isActive ? '2px solid #4f46e5' : '2px solid transparent'
                 }}
               >
                 <Icon size={16} />
@@ -118,146 +116,119 @@ export const Navbar = ({ activeTab, setActiveTab, onQuickNewMeeting }) => {
         </nav>
       )}
 
-      {/* Right Action & User Controls */}
+      {/* Right User Controls (Create Meeting removed from Navbar per Requirement 3) */}
       <div className="navbar-right-controls" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         {isAuthenticated ? (
-          <>
-            <button
-              onClick={onQuickNewMeeting}
-              className="btn btn-primary navbar-new-meeting-btn"
-              style={{ padding: '8px 14px', fontSize: '0.85rem' }}
+          <div style={{ position: 'relative' }}>
+            <div
+              onClick={() => setShowProfileMenu(!showProfileMenu)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                padding: '4px 10px 4px 4px',
+                borderRadius: '30px',
+                background: '#f8fafc',
+                border: '1px solid #e2e8f0',
+                cursor: 'pointer',
+                transition: 'border-color 0.2s'
+              }}
             >
-              <Plus size={16} />
-              <span>New Meeting</span>
-            </button>
-
-            {/* User Profile Pill */}
-            <div style={{ position: 'relative' }}>
-              <div
-                onClick={() => setShowProfileMenu(!showProfileMenu)}
+              <img
+                src={user?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.name}`}
+                alt={user?.name}
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px',
-                  padding: '4px 10px 4px 4px',
-                  borderRadius: '30px',
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  border: '1px solid var(--border-subtle)',
-                  cursor: 'pointer',
-                  transition: 'border-color 0.2s'
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  objectFit: 'cover',
+                  background: '#e2e8f0'
                 }}
-              >
-                <img
-                  src={user?.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.name}`}
-                  alt={user?.name}
-                  style={{
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '50%',
-                    objectFit: 'cover',
-                    background: '#1e293b'
-                  }}
-                />
-                <div className="navbar-profile-text" style={{ textAlign: 'left', marginRight: '4px' }}>
-                  <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#f8fafc', lineHeight: 1.2 }}>
-                    {user?.name?.split(' ')[0]}
-                  </div>
-                  <div style={{ fontSize: '0.7rem', color: '#818cf8', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                    <ShieldCheck size={11} />
-                    {user?.role === 'admin' ? 'Admin' : 'Member'}
-                  </div>
+              />
+              <div className="navbar-profile-text" style={{ textAlign: 'left', marginRight: '4px' }}>
+                <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#0f172a', lineHeight: 1.2 }}>
+                  {user?.name?.split(' ')[0]}
+                </div>
+                <div style={{ fontSize: '0.7rem', color: '#4f46e5', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                  <ShieldCheck size={11} />
+                  {user?.role === 'admin' ? 'Admin' : 'Member'}
                 </div>
               </div>
+            </div>
 
-              {/* Profile Dropdown Menu */}
-              {showProfileMenu && (
-                <div 
-                  className="glass-panel"
+            {/* Profile Dropdown Menu */}
+            {showProfileMenu && (
+              <div 
+                className="glass-panel"
+                style={{
+                  position: 'absolute',
+                  top: '46px',
+                  right: 0,
+                  width: '240px',
+                  padding: '12px',
+                  zIndex: 100,
+                  boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05)',
+                  background: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '12px'
+                }}
+              >
+                <div style={{ paddingBottom: '10px', borderBottom: '1px solid #e2e8f0', marginBottom: '8px' }}>
+                  <p style={{ fontWeight: 600, fontSize: '0.9rem', color: '#0f172a' }}>{user?.name}</p>
+                  <p style={{ fontSize: '0.75rem', color: '#64748b' }}>{user?.email}</p>
+                  <p style={{ fontSize: '0.72rem', color: '#4f46e5', marginTop: '4px' }}>{user?.title || user?.department}</p>
+                </div>
+
+                <button
+                  onClick={() => {
+                    setShowProfileMenu(false);
+                    setActiveTab('docs');
+                  }}
                   style={{
-                    position: 'absolute',
-                    top: '46px',
-                    right: 0,
-                    width: '240px',
-                    padding: '12px',
-                    zIndex: 100,
-                    boxShadow: 'var(--shadow-lg)'
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '8px 10px',
+                    background: 'transparent',
+                    border: 'none',
+                    color: '#334155',
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                    borderRadius: '6px'
                   }}
                 >
-                  <div style={{ paddingBottom: '10px', borderBottom: '1px solid var(--border-subtle)', marginBottom: '8px' }}>
-                    <p style={{ fontWeight: 600, fontSize: '0.9rem', color: '#fff' }}>{user?.name}</p>
-                    <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>{user?.email}</p>
-                    <p style={{ fontSize: '0.72rem', color: '#a5b4fc', marginTop: '4px' }}>{user?.title || user?.department}</p>
-                  </div>
+                  <FileText size={15} color="#4f46e5" />
+                  <span>Zidio Project Report</span>
+                </button>
 
-                  <button
-                    onClick={() => {
-                      setShowProfileMenu(false);
-                      setActiveTab('docs');
-                    }}
-                    style={{
-                      width: '100%',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '8px 10px',
-                      background: 'transparent',
-                      border: 'none',
-                      color: 'var(--text-main)',
-                      fontSize: '0.85rem',
-                      cursor: 'pointer',
-                      borderRadius: '6px'
-                    }}
-                  >
-                    <FileText size={15} color="#818cf8" />
-                    <span>Zidio Project Report</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setShowProfileMenu(false);
-                      logout();
-                    }}
-                    style={{
-                      width: '100%',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '8px 10px',
-                      marginTop: '4px',
-                      background: 'rgba(239, 68, 68, 0.1)',
-                      border: 'none',
-                      color: '#f87171',
-                      fontSize: '0.85rem',
-                      cursor: 'pointer',
-                      borderRadius: '6px'
-                    }}
-                  >
-                    <LogOut size={15} />
-                    <span>Sign Out</span>
-                  </button>
-                </div>
-              )}
-            </div>
-          </>
-        ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <button
-              onClick={() => demoLogin('admin')}
-              className="btn btn-primary"
-              style={{ fontSize: '0.82rem', padding: '7px 13px' }}
-            >
-              <Zap size={14} />
-              <span>Instant Demo (Admin)</span>
-            </button>
-            <button
-              onClick={() => demoLogin('member')}
-              className="btn btn-secondary"
-              style={{ fontSize: '0.82rem', padding: '7px 13px' }}
-            >
-              <span>Demo (Member)</span>
-            </button>
+                <button
+                  onClick={() => {
+                    setShowProfileMenu(false);
+                    logout();
+                  }}
+                  style={{
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '8px 10px',
+                    marginTop: '4px',
+                    background: '#fef2f2',
+                    border: 'none',
+                    color: '#ef4444',
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                    borderRadius: '6px'
+                  }}
+                >
+                  <LogOut size={15} />
+                  <span>Sign Out</span>
+                </button>
+              </div>
+            )}
           </div>
-        )}
+        ) : null}
 
         {/* Mobile Hamburger Toggle Button */}
         <button
@@ -266,14 +237,14 @@ export const Navbar = ({ activeTab, setActiveTab, onQuickNewMeeting }) => {
           aria-label="Toggle navigation menu"
           style={{
             background: 'transparent',
-            border: '1px solid var(--border-subtle)',
+            border: '1px solid #cbd5e1',
             borderRadius: '8px',
-            color: '#fff',
+            color: '#0f172a',
             cursor: 'pointer',
             padding: '7px'
           }}
         >
-          {mobileMenuOpen ? <X size={22} color="#818cf8" /> : <Menu size={22} />}
+          {mobileMenuOpen ? <X size={22} color="#4f46e5" /> : <Menu size={22} />}
         </button>
       </div>
 
@@ -299,8 +270,8 @@ export const Navbar = ({ activeTab, setActiveTab, onQuickNewMeeting }) => {
                       padding: '12px 16px',
                       borderRadius: '10px',
                       border: 'none',
-                      background: isActive ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255, 255, 255, 0.03)',
-                      color: isActive ? '#a5b4fc' : '#cbd5e1',
+                      background: isActive ? 'rgba(79, 70, 229, 0.08)' : '#f8fafc',
+                      color: isActive ? '#4f46e5' : '#334155',
                       fontFamily: 'var(--font-body)',
                       fontWeight: isActive ? 600 : 500,
                       fontSize: '0.95rem',
@@ -308,7 +279,7 @@ export const Navbar = ({ activeTab, setActiveTab, onQuickNewMeeting }) => {
                       textAlign: 'left'
                     }}
                   >
-                    <Icon size={18} color={isActive ? '#818cf8' : '#94a3b8'} />
+                    <Icon size={18} color={isActive ? '#4f46e5' : '#64748b'} />
                     <span>{item.label}</span>
                   </button>
                 );
@@ -317,58 +288,24 @@ export const Navbar = ({ activeTab, setActiveTab, onQuickNewMeeting }) => {
           )}
 
           {isAuthenticated ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', paddingTop: '12px', borderTop: '1px solid var(--border-subtle)' }}>
-              <button
-                onClick={() => {
-                  setMobileMenuOpen(false);
-                  onQuickNewMeeting();
-                }}
-                className="btn btn-primary"
-                style={{ width: '100%', padding: '12px', fontSize: '0.92rem' }}
-              >
-                <Plus size={18} />
-                <span>Start New Meeting</span>
-              </button>
-
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', paddingTop: '12px', borderTop: '1px solid #e2e8f0' }}>
               <button
                 onClick={() => {
                   setMobileMenuOpen(false);
                   logout();
                 }}
                 className="btn btn-secondary"
-                style={{ width: '100%', padding: '12px', color: '#f87171', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+                style={{ width: '100%', padding: '12px', color: '#ef4444', borderColor: '#fecaca', background: '#fef2f2' }}
               >
                 <LogOut size={16} />
                 <span>Sign Out ({user?.name?.split(' ')[0]})</span>
               </button>
             </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <button
-                onClick={() => {
-                  setMobileMenuOpen(false);
-                  demoLogin('admin');
-                }}
-                className="btn btn-primary"
-                style={{ width: '100%', padding: '12px' }}
-              >
-                <Zap size={16} />
-                <span>Instant Demo (Admin)</span>
-              </button>
-              <button
-                onClick={() => {
-                  setMobileMenuOpen(false);
-                  demoLogin('member');
-                }}
-                className="btn btn-secondary"
-                style={{ width: '100%', padding: '12px' }}
-              >
-                <span>Demo (Member)</span>
-              </button>
-            </div>
-          )}
+          ) : null}
         </div>
       )}
     </header>
   );
 };
+
+export default Navbar;

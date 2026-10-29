@@ -22,24 +22,19 @@ export const App = () => {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#080c14',
-        color: '#a5b4fc',
-        fontSize: '1.1rem'
+        backgroundColor: '#f8fafc',
+        color: '#4f46e5',
+        fontSize: '1.1rem',
+        fontWeight: 600
       }}>
         Initializing IntellMeet Platform...
       </div>
     );
   }
 
-  // Not logged in -> Show Landing Page
+  // Not logged in -> Show Authentication (Login / Sign Up)
   if (!isAuthenticated) {
-    return (
-      <div>
-        <div className="atmospheric-bg" />
-        <Navbar activeTab={activeTab} setActiveTab={setActiveTab} />
-        <LandingPage />
-      </div>
-    );
+    return <LandingPage />;
   }
 
   // In Active Video Meeting
@@ -65,17 +60,13 @@ export const App = () => {
   // Viewing Post-Meeting AI Intelligence & Summary
   if (summaryMeetingId) {
     return (
-      <div>
+      <div style={{ minHeight: '100vh', background: '#f8fafc', position: 'relative' }}>
         <div className="atmospheric-bg" />
         <Navbar
           activeTab={activeTab}
           setActiveTab={(tab) => {
             setSummaryMeetingId(null);
             setActiveTab(tab);
-          }}
-          onQuickNewMeeting={() => {
-            const code = `meet-${Math.random().toString(36).substr(2, 4)}-${Math.random().toString(36).substr(2, 4)}`;
-            setActiveRoomId(code);
           }}
         />
         <PostMeetingDetailsPage
@@ -91,17 +82,13 @@ export const App = () => {
   }
 
   return (
-    <div style={{ minHeight: '100vh', position: 'relative' }}>
+    <div style={{ minHeight: '100vh', background: '#f8fafc', position: 'relative' }}>
       <div className="atmospheric-bg" />
       
       {/* Navigation Header */}
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        onQuickNewMeeting={() => {
-          const code = `meet-${Math.random().toString(36).substr(2, 4)}-${Math.random().toString(36).substr(2, 4)}`;
-          setActiveRoomId(code);
-        }}
       />
 
       {/* Main Routed Page */}
@@ -123,3 +110,5 @@ export const App = () => {
     </div>
   );
 };
+
+export default App;

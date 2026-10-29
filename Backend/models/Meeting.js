@@ -133,7 +133,7 @@ const meetingSchema = new mongoose.Schema(
     participants: [participantSchema],
     status: {
       type: String,
-      enum: ['scheduled', 'live', 'ended'],
+      enum: ['scheduled', 'live', 'ended', 'active'],
       default: 'scheduled'
     },
     scheduledAt: {
@@ -170,7 +170,16 @@ const meetingSchema = new mongoose.Schema(
       type: String,
       default: ''
     },
+    topicsCovered: [{
+      type: String
+    }],
     keyTakeaways: [{
+      type: String
+    }],
+    keyDecisions: [{
+      type: String
+    }],
+    importantQuestions: [{
       type: String
     }],
     actionItems: [actionItemSchema],
