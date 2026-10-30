@@ -42,6 +42,7 @@ export const MeetingSideDrawer = ({
   roomId,
   meeting,
   transcriptLog = [],
+  interimTranscript = null,
   targetLanguage = 'none',
   onSelectTargetLanguage
 }) => {
@@ -474,7 +475,7 @@ export const MeetingSideDrawer = ({
             flexDirection: 'column',
             gap: '12px'
           }}>
-            {transcriptLog.length === 0 ? (
+            {transcriptLog.length === 0 && !interimTranscript ? (
               <div style={{ textAlign: 'center', margin: 'auto', color: 'var(--text-dim)', padding: '24px' }}>
                 <Sparkles size={28} color="#818cf8" style={{ marginBottom: '8px', opacity: 0.8 }} />
                 <p style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-muted)' }}>
@@ -485,48 +486,75 @@ export const MeetingSideDrawer = ({
                 </p>
               </div>
             ) : (
-              transcriptLog
-                .filter(t => !transcriptSearch || (t.text || '').toLowerCase().includes(transcriptSearch.toLowerCase()) || (t.translation || '').toLowerCase().includes(transcriptSearch.toLowerCase()) || (t.speaker || '').toLowerCase().includes(transcriptSearch.toLowerCase()))
-                .map((turn, idx) => (
+              <>
+                {transcriptLog
+                  .filter(t => !transcriptSearch || (t.text || '').toLowerCase().includes(transcriptSearch.toLowerCase()) || (t.translation || '').toLowerCase().includes(transcriptSearch.toLowerCase()) || (t.speaker || '').toLowerCase().includes(transcriptSearch.toLowerCase()))
+                  .map((turn, idx) => (
+                    <div
+                      key={turn.segmentId || idx}
+                      style={{
+                        background: 'rgba(255, 255, 255, 0.03)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: '10px',
+                        padding: '10px 12px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                        <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#818cf8' }}>
+                          {turn.speaker || 'Unknown Speaker'}
+                        </span>
+                        <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>
+                          {turn.timestamp || '00:00'}
+                        </span>
+                      </div>
+
+                      <div style={{ fontSize: '0.84rem', color: '#f8fafc', lineHeight: 1.4 }}>
+                        "{turn.text}"
+                      </div>
+
+                      {turn.translation && (
+                        <div style={{
+                          marginTop: '6px',
+                          paddingTop: '6px',
+                          borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+                          fontSize: '0.82rem',
+                          color: '#38bdf8',
+                          lineHeight: 1.4
+                        }}>
+                          <span style={{ fontSize: '0.68rem', background: 'rgba(56, 189, 248, 0.15)', color: '#7dd3fc', padding: '1px 5px', borderRadius: '3px', marginRight: '6px', fontWeight: 700 }}>
+                            {(turn.targetLanguage || targetLanguage).toUpperCase()}
+                          </span>
+                          {turn.translation}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                {/* Interim Live Updating Sentence */}
+                {interimTranscript && interimTranscript.text && (
                   <div
-                    key={idx}
                     style={{
-                      background: 'rgba(255, 255, 255, 0.03)',
-                      border: '1px solid var(--border-subtle)',
+                      background: 'rgba(99, 102, 241, 0.08)',
+                      border: '1px dashed rgba(99, 102, 241, 0.45)',
                       borderRadius: '10px',
                       padding: '10px 12px'
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
-                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#818cf8' }}>
-                        {turn.speaker || 'Speaker'}
+                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#a5b4fc', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#818cf8', display: 'inline-block' }} />
+                        {interimTranscript.speaker || 'Unknown Speaker'} (speaking...)
                       </span>
                       <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>
-                        {turn.timestamp || '00:00'}
+                        Live
                       </span>
                     </div>
-
-                    <div style={{ fontSize: '0.84rem', color: '#f8fafc', lineHeight: 1.4 }}>
-                      "{turn.text}"
+                    <div style={{ fontSize: '0.84rem', color: '#cbd5e1', fontStyle: 'italic', lineHeight: 1.4 }}>
+                      "{interimTranscript.text}"
                     </div>
-
-                    {turn.translation && (
-                      <div style={{
-                        marginTop: '6px',
-                        paddingTop: '6px',
-                        borderTop: '1px solid rgba(255, 255, 255, 0.06)',
-                        fontSize: '0.82rem',
-                        color: '#38bdf8',
-                        lineHeight: 1.4
-                      }}>
-                        <span style={{ fontSize: '0.68rem', background: 'rgba(56, 189, 248, 0.15)', color: '#7dd3fc', padding: '1px 5px', borderRadius: '3px', marginRight: '6px', fontWeight: 700 }}>
-                          {(turn.targetLanguage || targetLanguage).toUpperCase()}
-                        </span>
-                        {turn.translation}
-                      </div>
-                    )}
                   </div>
-                ))
+                )}
+              </>
             )}
           </div>
 

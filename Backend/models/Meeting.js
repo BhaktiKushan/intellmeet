@@ -37,13 +37,28 @@ const actionItemSchema = new mongoose.Schema({
 });
 
 const transcriptItemSchema = new mongoose.Schema({
+  segmentId: {
+    type: String,
+    required: true,
+    default: () => `seg-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`
+  },
+  meetingId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Meeting'
+  },
   speaker: {
     type: String,
-    required: true
+    required: true,
+    default: 'Unknown Speaker'
   },
   userId: {
     type: mongoose.Schema.Types.Mixed,
-    ref: 'User'
+    ref: 'User',
+    default: null
+  },
+  participantId: {
+    type: String,
+    default: ''
   },
   text: {
     type: String,
@@ -60,6 +75,10 @@ const transcriptItemSchema = new mongoose.Schema({
   timestamp: {
     type: String,
     required: true
+  },
+  isFinal: {
+    type: Boolean,
+    default: true
   }
 });
 

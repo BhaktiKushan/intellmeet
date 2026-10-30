@@ -339,10 +339,14 @@ test('IntellMeet Complete Enterprise Test Suite', async (suite) => {
     });
 
     await t.test('5b. Live Speech Transcription broadcasts transcript-update to room', async () => {
+      // Unmute client 2 first so it can speak
+      client2.emit('toggle-media', { roomId: testRoomId, type: 'audio', enabled: true });
+
       const transcriptPromise = new Promise((resolve) => {
         client1.once('transcript-update', (data) => {
           assert.equal(data.speaker, 'Participant Sarah');
           assert.equal(data.text, 'We are verifying the live speech transcription engine.');
+          assert.ok(data.segmentId, 'Segment ID should be present');
           resolve();
         });
       });
@@ -351,7 +355,8 @@ test('IntellMeet Complete Enterprise Test Suite', async (suite) => {
         roomId: testRoomId,
         item: {
           speaker: 'Participant Sarah',
-          text: 'We are verifying the live speech transcription engine.'
+          text: 'We are verifying the live speech transcription engine.',
+          isFinal: true
         }
       });
 
@@ -379,6 +384,62 @@ test('IntellMeet Complete Enterprise Test Suite', async (suite) => {
       });
 
       await translationPromise;
+    });
+
+    await t.test('5d. Multi-participant speaking: Client 1 speaks and receives exact Host Alex attribution', async () => {
+      const hostTranscriptPromise = new Promise((resolve) => {
+        client2.once('transcript-update', (data) => {
+          assert.equal(data.speaker, 'Host Alex');
+          assert.equal(data.text, 'This is Host Alex speaking to the room.');
+          resolve();
+        });
+      });
+
+      client1.emit('live-transcript', {
+        roomId: testRoomId,
+        item: {
+          speaker: 'Host Alex',
+          text: 'This is Host Alex speaking to the room.',
+          isFinal: true
+        }
+      });
+
+      await hostTranscriptPromise;
+    });
+
+    await t.test('5e. Server-side deduplication suppresses immediate duplicate sentence', async () => {
+      let receivedCount = 0;
+      const onUpdate = (data) => {
+        if (data.text === 'Unique phrase for testing deduplication filter.') {
+          receivedCount++;
+        }
+      };
+
+      client1.on('transcript-update', onUpdate);
+
+      // Emit first time
+      client2.emit('live-transcript', {
+        roomId: testRoomId,
+        item: {
+          speaker: 'Participant Sarah',
+          text: 'Unique phrase for testing deduplication filter.',
+          isFinal: true
+        }
+      });
+
+      // Emit second time immediately (duplicate)
+      client2.emit('live-transcript', {
+        roomId: testRoomId,
+        item: {
+          speaker: 'Participant Sarah',
+          text: 'Unique phrase for testing deduplication filter.',
+          isFinal: true
+        }
+      });
+
+      await new Promise(r => setTimeout(r, 350));
+      client1.off('transcript-update', onUpdate);
+      assert.equal(receivedCount, 1, 'Duplicate transcript must be suppressed by deduplication filter');
     });
 
     await t.test('6. Host kicks Client 2, Client 2 receives kicked-from-meeting notification', async () => {

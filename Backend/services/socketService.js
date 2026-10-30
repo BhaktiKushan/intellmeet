@@ -383,21 +383,75 @@ export const setupSocketIO = (io) => {
     // Real-Time Live Speech Transcription
     socket.on('live-transcript', async ({ roomId, item }) => {
       if (!item || !item.text) return;
+      const room = rooms.get(roomId);
+      const sender = room?.users.get(socket.id);
+
+      // 1. Authoritative Speaker Verification & Identification
+      let verifiedSpeaker = 'Unknown Speaker';
+      let verifiedUserId = null;
+
+      if (sender) {
+        // Prevent acoustic bleed: if sender is marked muted, reject speech emitted from their socket
+        if (sender.isAudioMuted) {
+          console.log(`[Socket] Dropping transcript from muted participant ${sender.name} (${socket.id})`);
+          return;
+        }
+        verifiedSpeaker = sender.name || item.speaker || 'Unknown Speaker';
+        verifiedUserId = sender.id || sender.userId || item.userId || null;
+      } else if (item.speaker && item.speaker !== 'Speaker' && item.speaker !== 'You' && item.speaker !== 'Host') {
+        verifiedSpeaker = item.speaker;
+        verifiedUserId = item.userId || null;
+      }
+
+      // Never allow generic fallback placeholders
+      if (verifiedSpeaker === 'Speaker' || verifiedSpeaker === 'Host' || verifiedSpeaker === 'You') {
+        verifiedSpeaker = 'Unknown Speaker';
+      }
+
+      const rawText = (item.text || '').trim();
+      if (!rawText) return;
+
+      const isFinal = item.isFinal !== false;
+      const segmentId = item.segmentId || `seg-${verifiedUserId || socket.id}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
+      // 2. Server-side Deduplication:
+      // Drop repeated final sentences within 4 seconds from same speaker/socket
+      if (room && isFinal) {
+        room.seenSegments = room.seenSegments || new Map();
+        const dedupKey = item.segmentId || `${verifiedUserId || socket.id}:${rawText.toLowerCase()}`;
+        const now = Date.now();
+        const lastSeen = room.seenSegments.get(dedupKey);
+        if (lastSeen && (now - lastSeen < 4000)) {
+          console.log(`[Socket] Dropping duplicate final segment [${dedupKey}]`);
+          return;
+        }
+        room.seenSegments.set(dedupKey, now);
+
+        // Prune old deduplication keys
+        if (room.seenSegments.size > 200) {
+          for (const [k, time] of room.seenSegments.entries()) {
+            if (now - time > 15000) room.seenSegments.delete(k);
+          }
+        }
+      }
+
       const transcriptItem = {
-        speaker: item.speaker || 'Speaker',
-        userId: item.userId || null,
-        text: item.text,
-        translation: item.translation || '',
+        segmentId,
+        speaker: verifiedSpeaker,
+        userId: verifiedUserId,
+        participantId: verifiedUserId || socket.id,
+        text: rawText,
+        translation: (item.translation || '').trim(),
         targetLanguage: item.targetLanguage || '',
-        timestamp: item.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+        timestamp: item.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        isFinal
       };
 
-      // Broadcast live caption banner to all peers in the room
+      // 3. Broadcast to all peers in the room
       io.to(roomId).emit('transcript-update', transcriptItem);
 
-      // Track recent speech turns for real-time live topic detection
-      const room = rooms.get(roomId);
-      if (room) {
+      // 4. Update sliding window for Real-Time Topic Detection (finalized turns only)
+      if (room && isFinal) {
         room.recentTranscript = room.recentTranscript || [];
         room.recentTranscript.push(transcriptItem);
         if (room.recentTranscript.length > 25) room.recentTranscript.shift();
@@ -427,27 +481,40 @@ export const setupSocketIO = (io) => {
         }
       }
 
-      // Persist in Meeting transcript array
-      try {
-        await Meeting.findOneAndUpdate(
-          { code: roomId },
-          {
-            $push: { transcript: transcriptItem }
-          }
-        );
-      } catch (err) {
-        console.warn('[Socket] Transcript persistence notice:', err.message);
+      // 5. Database Persistence: ONLY final segments, never duplicate
+      if (isFinal) {
+        try {
+          await Meeting.findOneAndUpdate(
+            { 
+              code: roomId,
+              'transcript.segmentId': { $ne: segmentId }
+            },
+            {
+              $push: { transcript: transcriptItem }
+            }
+          );
+        } catch (err) {
+          console.warn('[Socket] Transcript persistence notice:', err.message);
+        }
       }
     });
 
     // Real-Time Live Speech AI Translation
     socket.on('live-translation', async ({ roomId, item }) => {
       if (!item || (!item.translatedText && !item.translation)) return;
+      const translationText = (item.translatedText || item.translation || '').trim();
+      if (!translationText) return;
+
+      const room = rooms.get(roomId);
+      const sender = room?.users.get(socket.id);
+      const verifiedSpeaker = sender?.name || item.speaker || 'Unknown Speaker';
+
       const translationItem = {
-        speaker: item.speaker || 'Speaker',
-        userId: item.userId || null,
-        originalText: item.originalText || item.text || '',
-        translatedText: item.translatedText || item.translation || '',
+        segmentId: item.segmentId,
+        speaker: verifiedSpeaker,
+        userId: sender?.id || item.userId || null,
+        originalText: (item.originalText || item.text || '').trim(),
+        translatedText: translationText,
         targetLanguage: item.targetLanguage || 'en',
         timestamp: item.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
       };
@@ -455,14 +522,26 @@ export const setupSocketIO = (io) => {
       // Broadcast translated subtitle to all peers in the room
       io.to(roomId).emit('translation-update', translationItem);
 
-      // Persist in Meeting translatedTranscript array
+      // Persist / update in Meeting document
       try {
-        await Meeting.findOneAndUpdate(
-          { code: roomId },
-          {
-            $push: { translatedTranscript: translationItem }
-          }
-        );
+        if (translationItem.segmentId) {
+          await Meeting.findOneAndUpdate(
+            { code: roomId, 'transcript.segmentId': translationItem.segmentId },
+            {
+              $set: {
+                'transcript.$.translation': translationText,
+                'transcript.$.targetLanguage': translationItem.targetLanguage
+              }
+            }
+          );
+        } else {
+          await Meeting.findOneAndUpdate(
+            { code: roomId },
+            {
+              $push: { translatedTranscript: translationItem }
+            }
+          );
+        }
       } catch (err) {
         console.warn('[Socket] Translation persistence notice:', err.message);
       }

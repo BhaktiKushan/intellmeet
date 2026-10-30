@@ -143,7 +143,13 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
   const [sharedNotes, setSharedNotes] = useState('## Meeting Collaboration & Action Items\n- Enterprise low-latency WebRTC verified\n- Multi-track recording with mixed audio ready\n');
   const [showLiveTranscript, setShowLiveTranscript] = useState(true);
   const [latestTranscript, setLatestTranscript] = useState(null);
+  const [interimTranscript, setInterimTranscript] = useState(null);
   const [transcriptLog, setTranscriptLog] = useState([]);
+  const lastFinalTextRef = useRef(null);
+  const isAudioMutedRef = useRef(false);
+  useEffect(() => {
+    isAudioMutedRef.current = isAudioMuted;
+  }, [isAudioMuted]);
   const [targetLanguage, setTargetLanguage] = useState('none'); // 'none' | 'hi' | 'es' | 'fr' | 'de' | 'ja' | 'zh' | 'ar' | 'pt' | 'ru'
   const targetLanguageRef = useRef('none');
   useEffect(() => {
@@ -935,6 +941,11 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         if (audioTrack) {
           audioTrack.enabled = false;
           setIsAudioMuted(true);
+          isAudioMutedRef.current = true;
+          if (recognitionRef.current) {
+            try { recognitionRef.current.abort(); } catch (e) {}
+          }
+          setInterimTranscript(null);
         }
       }
       alert(`You were muted by ${by || 'the host'}.`);
@@ -1016,8 +1027,33 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
 
     // Live AI Speech-to-Text transcript
     socket.on('transcript-update', (item) => {
+      if (!item || !item.text) return;
+
+      // If this is an interim speech update from another participant:
+      if (item.isFinal === false) {
+        setInterimTranscript(item);
+        return;
+      }
+
+      // Finalized transcript segment:
+      setInterimTranscript(null);
       setLatestTranscript(item);
+
       setTranscriptLog(prev => {
+        // Prevent duplicate append by unique segmentId
+        if (item.segmentId && prev.some(t => t.segmentId === item.segmentId)) {
+          return prev;
+        }
+        // Prevent immediate repeat of exact same text from same speaker
+        const last = prev[prev.length - 1];
+        if (
+          last &&
+          last.speaker === item.speaker &&
+          last.text.trim().toLowerCase() === item.text.trim().toLowerCase()
+        ) {
+          return prev;
+        }
+
         const next = [...prev, item];
         transcriptLogRef.current = next;
         return next;
@@ -1026,36 +1062,45 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
 
     // Live AI Speech Translation updates
     socket.on('translation-update', (transItem) => {
-      setLatestTranscript(prev => ({
-        ...(prev || {}),
-        speaker: transItem.speaker,
-        text: transItem.originalText || prev?.text,
-        translation: transItem.translatedText,
-        targetLanguage: transItem.targetLanguage,
-        timestamp: transItem.timestamp
-      }));
-      setTranscriptLog(prev => {
-        const updated = [...prev];
-        const lastIdx = updated.findLastIndex(t => t.speaker === transItem.speaker && (t.text === transItem.originalText || !t.translation));
-        if (lastIdx !== -1) {
-          updated[lastIdx] = {
-            ...updated[lastIdx],
+      if (!transItem || !transItem.translatedText) return;
+
+      setLatestTranscript(prev => {
+        if (!prev) return prev;
+        if (
+          (transItem.segmentId && prev.segmentId === transItem.segmentId) ||
+          prev.speaker === transItem.speaker
+        ) {
+          return {
+            ...prev,
             translation: transItem.translatedText,
             targetLanguage: transItem.targetLanguage
           };
+        }
+        return prev;
+      });
+
+      setTranscriptLog(prev => {
+        let matched = false;
+        const updated = prev.map(t => {
+          if (
+            (transItem.segmentId && t.segmentId === transItem.segmentId) ||
+            (t.speaker === transItem.speaker && t.text === transItem.originalText)
+          ) {
+            matched = true;
+            return {
+              ...t,
+              translation: transItem.translatedText,
+              targetLanguage: transItem.targetLanguage
+            };
+          }
+          return t;
+        });
+
+        if (matched) {
           transcriptLogRef.current = updated;
           return updated;
         }
-        const next = [...prev, {
-          speaker: transItem.speaker,
-          userId: transItem.userId,
-          text: transItem.originalText,
-          translation: transItem.translatedText,
-          targetLanguage: transItem.targetLanguage,
-          timestamp: transItem.timestamp
-        }];
-        transcriptLogRef.current = next;
-        return next;
+        return prev;
       });
     });
 
@@ -1073,87 +1118,137 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
   // Browser Web Speech API for AI Speech-to-Text & Translation
   const initSpeechRecognition = (socket) => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      try {
-        const recognition = new SpeechRecognition();
-        recognition.continuous = true;
-        recognition.interimResults = false;
-        recognition.lang = 'en-US';
+    if (!SpeechRecognition) return;
 
-        recognition.onresult = async (event) => {
-          const current = event.resultIndex;
-          const transcriptText = event.results[current][0].transcript;
-          if (transcriptText.trim()) {
-            const rawText = transcriptText.trim();
-            const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            
-            let translationText = '';
-            const currentLang = targetLanguageRef.current;
-            if (currentLang && currentLang !== 'none') {
-              try {
-                const transRes = await api.translateText(rawText, currentLang);
-                if (transRes?.data?.translatedText) {
-                  translationText = transRes.data.translatedText;
-                }
-              } catch (e) {
-                console.warn('[SpeechRecognition] Translation notice:', e.message);
-              }
-            }
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true; // Enables live real-time speech preview without duplicate commits
+      recognition.lang = 'en-US';
 
-            const transcriptItem = {
-              speaker: user?.name || 'Speaker',
-              userId: user?._id || null,
-              text: rawText,
-              translation: translationText,
-              targetLanguage: currentLang !== 'none' ? currentLang : '',
-              timestamp
-            };
-            setLatestTranscript(transcriptItem);
-            setTranscriptLog(prev => {
-              const next = [...prev, transcriptItem];
-              transcriptLogRef.current = next;
-              return next;
-            });
-            if (socket) {
-              socket.emit('live-transcript', { roomId, item: transcriptItem });
-              if (translationText) {
-                socket.emit('live-translation', {
-                  roomId,
-                  item: {
-                    speaker: transcriptItem.speaker,
-                    userId: transcriptItem.userId,
-                    originalText: rawText,
-                    translatedText: translationText,
-                    targetLanguage: currentLang,
-                    timestamp
-                  }
-                });
-              }
+      const handleFinalTranscript = async (finalText) => {
+        if (!finalText) return;
+        // Strict guard: if muted, immediately discard (eliminates acoustic bleed from laptop speakers)
+        if (isAudioMutedRef.current) {
+          console.log('[SpeechRecognition] Suppressed speech while muted (preventing acoustic bleed)');
+          return;
+        }
+
+        const cleanText = finalText.trim();
+        if (!cleanText) return;
+
+        // Deduplication: suppress repeated sentences within 3.5 seconds
+        const now = Date.now();
+        const normalized = cleanText.toLowerCase().replace(/[.,!?;:]/g, '').trim();
+        if (
+          lastFinalTextRef.current &&
+          lastFinalTextRef.current.text === normalized &&
+          now - lastFinalTextRef.current.time < 3500
+        ) {
+          console.log('[SpeechRecognition] Suppressed duplicate final text:', cleanText);
+          return;
+        }
+        lastFinalTextRef.current = { text: normalized, time: now };
+
+        // Clear interim preview
+        setInterimTranscript(null);
+
+        const speakerName = user?.name || confirmedName || 'Unknown Speaker';
+        const segmentId = `seg-${user?._id || socketRef.current?.id || 'anon'}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+        const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+        // Translate finalized segment if target language is selected
+        let translationText = '';
+        const currentLang = targetLanguageRef.current;
+        if (currentLang && currentLang !== 'none') {
+          try {
+            const transRes = await api.translateText(cleanText, currentLang);
+            if (transRes?.data?.translatedText) {
+              translationText = transRes.data.translatedText;
             }
+          } catch (e) {
+            console.warn('[SpeechRecognition] Translation notice:', e.message);
           }
+        }
+
+        const transcriptItem = {
+          segmentId,
+          speaker: speakerName,
+          userId: user?._id || null,
+          participantId: user?._id || socketRef.current?.id || null,
+          text: cleanText,
+          translation: translationText,
+          targetLanguage: currentLang !== 'none' ? currentLang : '',
+          timestamp,
+          isFinal: true
         };
 
-        recognition.onend = () => {
-          if (isSpeechRecognitionActiveRef.current && !isCleaningUpRef.current) {
-            try {
-              recognition.start();
-            } catch (err) {
-              // Ignore if already listening
+        setLatestTranscript(transcriptItem);
+        setTranscriptLog(prev => {
+          if (prev.some(t => t.segmentId === segmentId)) return prev;
+          const next = [...prev, transcriptItem];
+          transcriptLogRef.current = next;
+          return next;
+        });
+
+        if (socketRef.current) {
+          socketRef.current.emit('live-transcript', { roomId, item: transcriptItem });
+        }
+      };
+
+      recognition.onresult = (event) => {
+        // Discard all speech if muted
+        if (isAudioMutedRef.current) return;
+
+        let interimText = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const result = event.results[i];
+          if (result.isFinal) {
+            const text = result[0].transcript;
+            if (text && text.trim()) {
+              handleFinalTranscript(text.trim());
             }
+          } else {
+            interimText += result[0].transcript;
           }
-        };
+        }
 
-        recognition.onerror = (err) => {
-          if (err.error !== 'no-speech' && err.error !== 'aborted') {
-            console.warn('[SpeechRecognition] Engine event:', err.error);
+        if (interimText.trim() && !isAudioMutedRef.current) {
+          const speakerName = user?.name || confirmedName || 'Unknown Speaker';
+          const interimItem = {
+            speaker: speakerName,
+            userId: user?._id || null,
+            text: interimText.trim(),
+            isFinal: false,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          };
+          setInterimTranscript(interimItem);
+        }
+      };
+
+      recognition.onend = () => {
+        // Only restart if the user is unmuted and session is still active
+        if (!isAudioMutedRef.current && isSpeechRecognitionActiveRef.current && !isCleaningUpRef.current) {
+          try {
+            recognition.start();
+          } catch (err) {
+            // Ignore if already listening
           }
-        };
+        }
+      };
 
+      recognition.onerror = (err) => {
+        if (err.error !== 'no-speech' && err.error !== 'aborted') {
+          console.warn('[SpeechRecognition] Engine event:', err.error);
+        }
+      };
+
+      if (!isAudioMutedRef.current) {
         recognition.start();
-        recognitionRef.current = recognition;
-      } catch (err) {
-        console.warn('[SpeechRecognition] Init note:', err.message);
       }
+      recognitionRef.current = recognition;
+    } catch (err) {
+      console.warn('[SpeechRecognition] Init note:', err.message);
     }
   };
 
@@ -1165,14 +1260,31 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
     if (stream) {
       const audioTrack = stream.getAudioTracks()[0];
       if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled;
-        setIsAudioMuted(!audioTrack.enabled);
+        const nextEnabled = !audioTrack.enabled;
+        audioTrack.enabled = nextEnabled;
+        const nextMuted = !nextEnabled;
+        setIsAudioMuted(nextMuted);
+        isAudioMutedRef.current = nextMuted;
+
+        if (nextMuted) {
+          if (recognitionRef.current) {
+            try { recognitionRef.current.abort(); } catch (e) {}
+          }
+          setInterimTranscript(null);
+        } else {
+          if (isSpeechRecognitionActiveRef.current && recognitionRef.current) {
+            try { recognitionRef.current.start(); } catch (e) {}
+          }
+        }
+
         if (socketRef.current) {
-          socketRef.current.emit('toggle-media', { roomId, type: 'audio', enabled: audioTrack.enabled });
+          socketRef.current.emit('toggle-media', { roomId, type: 'audio', enabled: nextEnabled });
         }
       }
     } else {
-      setIsAudioMuted(!isAudioMuted);
+      const nextMuted = !isAudioMuted;
+      setIsAudioMuted(nextMuted);
+      isAudioMutedRef.current = nextMuted;
     }
   };
 
@@ -1927,7 +2039,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         />
 
         {/* Live Speech-to-Text AI Captions Banner */}
-        {showLiveTranscript && latestTranscript && (
+        {showLiveTranscript && (interimTranscript || latestTranscript) && (
           <div
             className="meeting-captions-banner"
             style={{
@@ -1939,7 +2051,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
               width: '90%',
               background: 'rgba(10, 15, 26, 0.94)',
               backdropFilter: 'blur(20px)',
-              border: '1px solid rgba(99, 102, 241, 0.35)',
+              border: interimTranscript ? '1px dashed rgba(99, 102, 241, 0.6)' : '1px solid rgba(99, 102, 241, 0.35)',
               borderRadius: '14px',
               padding: '12px 20px',
               boxShadow: 'var(--shadow-lg)',
@@ -1960,23 +2072,32 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
               justifyContent: 'center',
               flexShrink: 0
             }}>
-              <Sparkles size={16} color="#818cf8" />
+              <Sparkles size={16} color="#818cf8" className={interimTranscript ? 'animate-pulse' : ''} />
             </div>
             <div style={{ flex: 1, textAlign: 'left' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '3px' }}>
-                <span style={{ fontSize: '0.72rem', color: '#818cf8', fontWeight: 700 }}>
-                  {latestTranscript.speaker} &nbsp;•&nbsp; {latestTranscript.timestamp}
+                <span style={{ fontSize: '0.72rem', color: '#818cf8', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  {interimTranscript ? (
+                    <>
+                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#818cf8', display: 'inline-block' }} />
+                      {interimTranscript.speaker || 'Unknown Speaker'} (speaking...)
+                    </>
+                  ) : (
+                    <>
+                      {latestTranscript?.speaker || 'Unknown Speaker'} &nbsp;•&nbsp; {latestTranscript?.timestamp}
+                    </>
+                  )}
                 </span>
-                {latestTranscript.translation && (
+                {!interimTranscript && latestTranscript?.translation && (
                   <span style={{ fontSize: '0.68rem', background: 'rgba(99, 102, 241, 0.25)', color: '#c7d2fe', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
                     AI Translated ({latestTranscript.targetLanguage?.toUpperCase() || 'LIVE'})
                   </span>
                 )}
               </div>
-              <div style={{ fontSize: '0.88rem', color: '#f8fafc', fontWeight: 500 }}>
-                "{latestTranscript.text}"
+              <div style={{ fontSize: '0.88rem', color: interimTranscript ? '#cbd5e1' : '#f8fafc', fontWeight: 500, fontStyle: interimTranscript ? 'italic' : 'normal' }}>
+                "{interimTranscript ? interimTranscript.text : latestTranscript?.text}"
               </div>
-              {latestTranscript.translation && (
+              {!interimTranscript && latestTranscript?.translation && (
                 <div style={{ fontSize: '0.84rem', color: '#38bdf8', fontWeight: 500, marginTop: '4px', borderTop: '1px solid rgba(255, 255, 255, 0.08)', paddingTop: '4px' }}>
                   🌐 {latestTranscript.translation}
                 </div>
@@ -2006,6 +2127,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
           roomId={roomId}
           meeting={meeting}
           transcriptLog={transcriptLog}
+          interimTranscript={interimTranscript}
           targetLanguage={targetLanguage}
           onSelectTargetLanguage={setTargetLanguage}
         />

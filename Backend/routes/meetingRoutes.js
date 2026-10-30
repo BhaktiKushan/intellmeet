@@ -170,7 +170,15 @@ router.post('/:id/end', protect, async (req, res, next) => {
 
     const { transcript, chatMessages } = req.body || {};
     if (transcript && Array.isArray(transcript) && transcript.length > 0) {
-      meeting.transcript = transcript;
+      const combined = [...(meeting.transcript || []), ...transcript];
+      const seen = new Set();
+      meeting.transcript = combined.filter(item => {
+        if (!item || !item.text) return false;
+        const key = item.segmentId || `${item.speaker || 'Unknown'}:${(item.text || '').trim().toLowerCase()}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
     }
     if (chatMessages && Array.isArray(chatMessages) && chatMessages.length > 0) {
       meeting.chatMessages = chatMessages;
@@ -247,7 +255,16 @@ router.post('/:id/ai-intelligence', protect, async (req, res, next) => {
     }
 
     if (transcript && transcript.length > 0) {
-      meeting.transcript = transcript;
+      const combined = [...(meeting.transcript || []), ...transcript];
+      const seen = new Set();
+      meeting.transcript = combined.filter(item => {
+        if (!item || !item.text) return false;
+        const key = item.segmentId || `${item.speaker || 'Unknown'}:${(item.text || '').trim().toLowerCase()}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      targetTranscript = meeting.transcript;
     }
 
     const aiResults = await generateMeetingSummary(targetTranscript, meeting.title, meeting._id.toString());
