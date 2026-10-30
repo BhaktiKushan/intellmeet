@@ -19,7 +19,8 @@ import {
   Check,
   Copy,
   ShieldCheck,
-  MoreVertical
+  MoreVertical,
+  Globe
 } from 'lucide-react';
 
 export const MeetingControls = ({
@@ -34,6 +35,8 @@ export const MeetingControls = ({
   onToggleRecording,
   showLiveTranscript,
   onToggleLiveTranscript,
+  targetLanguage = 'none',
+  onSelectTargetLanguage,
   isHandRaised,
   onToggleHand,
   activeTab,
@@ -516,6 +519,16 @@ export const MeetingControls = ({
           }}>
             {participantCount}
           </span>
+        </button>
+
+        {/* Live AI Transcript & Translation Drawer Button */}
+        <button
+          onClick={() => onToggleTab(activeTab === 'transcript' ? null : 'transcript')}
+          className={`control-btn ${activeTab === 'transcript' ? 'control-btn-primary' : 'control-btn-active'}`}
+          style={{ width: '42px', height: '42px', borderRadius: '50%', padding: 0 }}
+          title="Live AI Transcript & Translation"
+        >
+          <Globe size={18} color={activeTab === 'transcript' ? '#ffffff' : '#818cf8'} />
         </button>
 
         {/* Collaborative Notes Drawer Button */}

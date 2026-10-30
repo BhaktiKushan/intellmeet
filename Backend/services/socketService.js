@@ -377,10 +377,13 @@ export const setupSocketIO = (io) => {
 
     // Real-Time Live Speech Transcription
     socket.on('live-transcript', async ({ roomId, item }) => {
+      if (!item || !item.text) return;
       const transcriptItem = {
         speaker: item.speaker || 'Speaker',
-        userId: item.userId,
+        userId: item.userId || null,
         text: item.text,
+        translation: item.translation || '',
+        targetLanguage: item.targetLanguage || '',
         timestamp: item.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
       };
 
@@ -396,7 +399,35 @@ export const setupSocketIO = (io) => {
           }
         );
       } catch (err) {
-        // Non-fatal
+        console.warn('[Socket] Transcript persistence notice:', err.message);
+      }
+    });
+
+    // Real-Time Live Speech AI Translation
+    socket.on('live-translation', async ({ roomId, item }) => {
+      if (!item || (!item.translatedText && !item.translation)) return;
+      const translationItem = {
+        speaker: item.speaker || 'Speaker',
+        userId: item.userId || null,
+        originalText: item.originalText || item.text || '',
+        translatedText: item.translatedText || item.translation || '',
+        targetLanguage: item.targetLanguage || 'en',
+        timestamp: item.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      };
+
+      // Broadcast translated subtitle to all peers in the room
+      io.to(roomId).emit('translation-update', translationItem);
+
+      // Persist in Meeting translatedTranscript array
+      try {
+        await Meeting.findOneAndUpdate(
+          { code: roomId },
+          {
+            $push: { translatedTranscript: translationItem }
+          }
+        );
+      } catch (err) {
+        console.warn('[Socket] Translation persistence notice:', err.message);
       }
     });
 

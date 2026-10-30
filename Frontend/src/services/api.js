@@ -124,6 +124,16 @@ export const api = {
     return handleResponse(res);
   },
 
+  // AI Translation
+  translateText: async (text, targetLanguage, sourceLanguage = 'auto') => {
+    const res = await fetch(`${API_BASE}/ai/translate`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ text, targetLanguage, sourceLanguage })
+    });
+    return handleResponse(res);
+  },
+
   // Tasks (Kanban)
   getTasks: async (filters = {}) => {
     const queryString = new URLSearchParams(filters).toString();

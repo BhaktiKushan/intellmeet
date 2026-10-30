@@ -11,10 +11,11 @@ import {
   Zap,
   Activity,
   Layers,
-  Calendar
+  Calendar,
+  ArrowLeft
 } from 'lucide-react';
 
-export const AnalyticsPage = () => {
+export const AnalyticsPage = ({ onBack, onNavigateTab }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -49,6 +50,28 @@ export const AnalyticsPage = () => {
 
   return (
     <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '32px 24px 80px' }}>
+      {/* Top Back Navigation Button */}
+      <div style={{ marginBottom: '16px' }}>
+        <button
+          onClick={onBack || (() => onNavigateTab ? onNavigateTab('dashboard') : window.history.back())}
+          className="btn btn-secondary"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '8px 16px',
+            fontSize: '0.86rem',
+            borderRadius: '10px',
+            border: '1px solid var(--border-subtle)',
+            background: 'rgba(255, 255, 255, 0.05)',
+            color: '#a5b4fc',
+            cursor: 'pointer'
+          }}
+        >
+          <ArrowLeft size={16} />
+          <span>Back to Dashboard</span>
+        </button>
+      </div>
       
       {/* Page Header */}
       <div style={{ marginBottom: '32px' }}>

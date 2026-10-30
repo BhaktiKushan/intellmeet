@@ -69,7 +69,7 @@ export const App = () => {
   // Viewing Post-Meeting AI Intelligence & Summary
   if (summaryMeetingId) {
     return (
-      <div style={{ minHeight: '100vh', background: '#f8fafc', position: 'relative' }}>
+      <div style={{ minHeight: '100vh', background: 'var(--bg-main, #080c14)', position: 'relative' }}>
         <div className="atmospheric-bg" />
         <Navbar
           activeTab={activeTab}
@@ -99,7 +99,7 @@ export const App = () => {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f8fafc', position: 'relative' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--bg-main, #080c14)', position: 'relative' }}>
       <div className="atmospheric-bg" />
       
       {/* Navigation Header */}
@@ -121,17 +121,33 @@ export const App = () => {
 
           {activeTab === 'meetings' && (
             <MeetingsPage
+              onBack={() => setActiveTab('dashboard')}
               onJoinMeeting={(code) => setActiveRoomId(code)}
               onViewMeetingDetails={(codeOrId) => setSummaryMeetingId(codeOrId)}
               onNavigateTab={(tab) => setActiveTab(tab)}
             />
           )}
 
-          {activeTab === 'kanban' && <KanbanPage />}
+          {activeTab === 'kanban' && (
+            <KanbanPage
+              onBack={() => setActiveTab('dashboard')}
+              onNavigateTab={(tab) => setActiveTab(tab)}
+            />
+          )}
 
-          {activeTab === 'analytics' && <AnalyticsPage />}
+          {activeTab === 'analytics' && (
+            <AnalyticsPage
+              onBack={() => setActiveTab('dashboard')}
+              onNavigateTab={(tab) => setActiveTab(tab)}
+            />
+          )}
 
-          {activeTab === 'docs' && <DocsPage />}
+          {activeTab === 'docs' && (
+            <DocsPage
+              onBack={() => setActiveTab('dashboard')}
+              onNavigateTab={(tab) => setActiveTab(tab)}
+            />
+          )}
         </ErrorBoundary>
       </main>
     </div>

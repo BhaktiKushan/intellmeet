@@ -1,8 +1,30 @@
 import express from 'express';
-import { generateMeetingSummary } from '../services/aiService.js';
+import { generateMeetingSummary, translateText } from '../services/aiService.js';
 import { protect } from '../middleware/auth.js';
 
 const router = express.Router();
+
+// Real-time AI Speech Translation
+router.post('/translate', protect, async (req, res, next) => {
+  try {
+    const { text, targetLanguage, sourceLanguage } = req.body;
+    if (!text || !targetLanguage) {
+      return res.status(400).json({ success: false, message: 'Text and targetLanguage are required' });
+    }
+
+    const translatedText = await translateText(text, targetLanguage, sourceLanguage);
+    res.json({
+      success: true,
+      data: {
+        originalText: text,
+        translatedText,
+        targetLanguage
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // Summarize meeting text or transcript
 router.post('/summarize', protect, async (req, res, next) => {

@@ -35,7 +35,31 @@ const extractJson = (text) => {
   }
 };
 
-export const generateMeetingSummary = async (transcript = [], meetingTitle = 'Team Meeting') => {
+// In-flight summarization locks to prevent concurrent duplicate LLM calls
+const inFlightSummaries = new Map();
+
+export const generateMeetingSummary = async (transcript = [], meetingTitle = 'Team Meeting', meetingKey = null) => {
+  const cacheKey = meetingKey ? String(meetingKey) : null;
+  if (cacheKey && inFlightSummaries.has(cacheKey)) {
+    console.log(`[AI Service] Reusing in-flight summary generation promise for meetingKey: ${cacheKey}`);
+    return inFlightSummaries.get(cacheKey);
+  }
+
+  const executionPromise = (async () => {
+    return await executeMeetingSummary(transcript, meetingTitle);
+  })();
+
+  if (cacheKey) {
+    inFlightSummaries.set(cacheKey, executionPromise);
+    executionPromise.finally(() => {
+      setTimeout(() => inFlightSummaries.delete(cacheKey), 8000);
+    });
+  }
+
+  return executionPromise;
+};
+
+const executeMeetingSummary = async (transcript = [], meetingTitle = 'Team Meeting') => {
   // Normalize transcript input
   let transcriptText = '';
   let transcriptList = [];
@@ -348,4 +372,147 @@ Respond ONLY with a valid JSON object matching this schema:
 
 export const transcribeAudio = async (audioBuffer) => {
   return 'Audio processed via real-time speech processor.';
+};
+
+/**
+ * Real-time Speech AI Translation Engine
+ * Translates speech turns into target languages with low latency
+ */
+export const translateText = async (text, targetLanguage = 'en', sourceLanguage = 'auto') => {
+  if (!text || !text.trim()) return '';
+  if (!targetLanguage || targetLanguage === 'none' || targetLanguage === 'auto') return text.trim();
+
+  const LANGUAGE_NAMES = {
+    hi: 'Hindi',
+    es: 'Spanish',
+    fr: 'French',
+    de: 'German',
+    ja: 'Japanese',
+    zh: 'Chinese (Simplified)',
+    ar: 'Arabic',
+    pt: 'Portuguese',
+    ru: 'Russian',
+    it: 'Italian',
+    bn: 'Bengali',
+    en: 'English'
+  };
+
+  const targetName = LANGUAGE_NAMES[targetLanguage] || targetLanguage;
+  const geminiKey = process.env.GEMINI_API_KEY?.trim();
+
+  if (geminiKey && geminiKey.length > 10) {
+    const candidateModels = [
+      'gemini-3.1-flash-lite',
+      'gemini-flash-lite-latest',
+      'gemini-3.5-flash-lite',
+      'gemini-flash-latest'
+    ];
+
+    const prompt = `Translate the following spoken turn into ${targetName} (${targetLanguage}).
+Maintain natural conversational tone. Return ONLY the translated text without extra explanation or quotation marks.
+
+Spoken Turn:
+"""
+${text.trim()}
+"""`;
+
+    for (const model of candidateModels) {
+      try {
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
+        const res = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: AbortSignal.timeout(6000),
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.1
+            }
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const translated = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          if (translated) {
+            return translated.replace(/^["']|["']$/g, '').trim();
+          }
+        }
+      } catch (e) {
+        // Continue to fallback
+      }
+    }
+  }
+
+  // Robust contextual fallback dictionary for common meeting turns
+  const fallbackDict = {
+    hi: {
+      'hello': 'नमस्ते',
+      'good morning': 'शुभ प्रभात',
+      'good afternoon': 'शुभ दोपहर',
+      'yes': 'हाँ',
+      'no': 'नहीं',
+      'thank you': 'धन्यवाद',
+      'can you hear me': 'क्या आप मुझे सुन सकते हैं?',
+      'lets start': 'चलिए शुरू करते हैं',
+      'meeting': 'बैठक',
+      'ok': 'ठीक है',
+      'i agree': 'मैं सहमत हूँ',
+      'next item': 'अगला विषय'
+    },
+    es: {
+      'hello': 'Hola',
+      'good morning': 'Buenos días',
+      'good afternoon': 'Buenas tardes',
+      'yes': 'Sí',
+      'no': 'No',
+      'thank you': 'Gracias',
+      'can you hear me': '¿Me escuchan?',
+      'lets start': 'Comencemos',
+      'meeting': 'Reunión',
+      'ok': 'De acuerdo',
+      'i agree': 'Estoy de acuerdo',
+      'next item': 'Siguiente punto'
+    },
+    fr: {
+      'hello': 'Bonjour',
+      'good morning': 'Bonjour',
+      'good afternoon': 'Bon après-midi',
+      'yes': 'Oui',
+      'no': 'Non',
+      'thank you': 'Merci',
+      'can you hear me': 'Est-ce que vous m\'entendez?',
+      'lets start': 'Commençons',
+      'meeting': 'Réunion',
+      'ok': 'D\'accord',
+      'i agree': 'Je suis d\'accord',
+      'next item': 'Point suivant'
+    },
+    de: {
+      'hello': 'Hallo',
+      'good morning': 'Guten Morgen',
+      'yes': 'Ja',
+      'no': 'Nein',
+      'thank you': 'Danke',
+      'can you hear me': 'Können Sie mich hören?',
+      'lets start': 'Lasst uns anfangen',
+      'meeting': 'Besprechung'
+    },
+    ja: {
+      'hello': 'こんにちは',
+      'good morning': 'おはようございます',
+      'yes': 'はい',
+      'no': 'いいえ',
+      'thank you': 'ありがとうございます',
+      'can you hear me': '聞こえますか？',
+      'lets start': '始めましょう'
+    }
+  };
+
+  const clean = text.trim().toLowerCase().replace(/[.!?,]/g, '');
+  if (fallbackDict[targetLanguage] && fallbackDict[targetLanguage][clean]) {
+    return fallbackDict[targetLanguage][clean];
+  }
+
+  return `[${targetName}] ${text.trim()}`;
 };

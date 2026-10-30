@@ -304,7 +304,7 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
           style={{ padding: '8px 16px', fontSize: '0.88rem' }}
         >
           <ArrowLeft size={16} />
-          <span>Back</span>
+          <span>Back to Dashboard</span>
         </button>
 
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
@@ -872,6 +872,14 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
                       <p style={{ fontSize: '0.9rem', color: 'var(--text-main)', lineHeight: 1.5, margin: 0 }}>
                         {text}
                       </p>
+                      {rawLine?.translation && (
+                        <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px solid rgba(255, 255, 255, 0.06)', fontSize: '0.84rem', color: '#38bdf8', lineHeight: 1.4 }}>
+                          <span style={{ fontSize: '0.68rem', background: 'rgba(56, 189, 248, 0.15)', color: '#7dd3fc', padding: '1px 5px', borderRadius: '3px', marginRight: '6px', fontWeight: 700 }}>
+                            {(rawLine.targetLanguage || 'Translated').toUpperCase()}
+                          </span>
+                          {rawLine.translation}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );

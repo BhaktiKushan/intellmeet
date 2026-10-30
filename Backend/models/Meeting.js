@@ -14,7 +14,7 @@ const actionItemSchema = new mongoose.Schema({
     default: 'Unassigned'
   },
   assigneeId: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: mongoose.Schema.Types.Mixed,
     ref: 'User'
   },
   priority: {
@@ -42,12 +42,20 @@ const transcriptItemSchema = new mongoose.Schema({
     required: true
   },
   userId: {
-    type: mongoose.Schema.Types.ObjectId,
+    type: mongoose.Schema.Types.Mixed,
     ref: 'User'
   },
   text: {
     type: String,
     required: true
+  },
+  translation: {
+    type: String,
+    default: ''
+  },
+  targetLanguage: {
+    type: String,
+    default: ''
   },
   timestamp: {
     type: String,
@@ -166,6 +174,14 @@ const meetingSchema = new mongoose.Schema(
       password: { type: String, default: '' }
     },
     transcript: [transcriptItemSchema],
+    translatedTranscript: [{
+      speaker: { type: String, required: true },
+      userId: { type: mongoose.Schema.Types.Mixed },
+      originalText: { type: String, required: true },
+      translatedText: { type: String, required: true },
+      targetLanguage: { type: String, default: 'en' },
+      timestamp: { type: String, required: true }
+    }],
     summary: {
       type: String,
       default: ''

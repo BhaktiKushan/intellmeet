@@ -18,10 +18,12 @@ import {
   Plus,
   RefreshCw,
   Info,
-  X
+  X,
+  ArrowLeft
 } from 'lucide-react';
 
 export const MeetingsPage = ({
+  onBack,
   onJoinMeeting,
   onViewMeetingDetails,
   onNavigateTab
@@ -127,6 +129,29 @@ export const MeetingsPage = ({
   return (
     <div style={{ maxWidth: '1440px', margin: '0 auto', padding: '32px 24px 80px' }}>
       
+      {/* Top Back Navigation Button */}
+      <div style={{ marginBottom: '16px' }}>
+        <button
+          onClick={onBack || (() => onNavigateTab ? onNavigateTab('dashboard') : window.history.back())}
+          className="btn btn-secondary"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '8px 16px',
+            fontSize: '0.86rem',
+            borderRadius: '10px',
+            border: '1px solid var(--border-subtle)',
+            background: 'rgba(255, 255, 255, 0.05)',
+            color: '#a5b4fc',
+            cursor: 'pointer'
+          }}
+        >
+          <ArrowLeft size={16} />
+          <span>Back to Dashboard</span>
+        </button>
+      </div>
+
       {/* 1. PAGE HEADER */}
       <div style={{
         display: 'flex',

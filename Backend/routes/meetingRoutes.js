@@ -118,30 +118,7 @@ router.get('/:codeOrId', protect, async (req, res, next) => {
       meeting = await Meeting.findById(meeting._id).populate('host', 'name email avatar title department');
     }
 
-    // If meeting is ended and missing summary, auto-generate and persist it so View AI Summary never opens empty
-    if (meeting.status === 'ended' && (!meeting.summary || !meeting.keyTakeaways || meeting.keyTakeaways.length === 0)) {
-      let transcriptToUse = (meeting.transcript && meeting.transcript.length > 0) ? meeting.transcript : [];
-      if (transcriptToUse.length === 0 && meeting.chatMessages && meeting.chatMessages.length > 0) {
-        transcriptToUse = meeting.chatMessages.map(c => ({
-          speaker: c.sender || 'Participant',
-          text: c.text,
-          timestamp: new Date(c.timestamp).toLocaleTimeString()
-        }));
-      }
-      try {
-        const aiResults = await generateMeetingSummary(transcriptToUse, meeting.title);
-        meeting.summary = aiResults.summary;
-        meeting.topicsCovered = aiResults.topicsCovered;
-        meeting.keyTakeaways = aiResults.keyTakeaways;
-        meeting.keyDecisions = aiResults.keyDecisions;
-        meeting.importantQuestions = aiResults.importantQuestions;
-        meeting.actionItems = aiResults.actionItems;
-        await meeting.save();
-      } catch (summaryErr) {
-        console.warn('[Meeting Details] Auto summary generation notice:', summaryErr.message);
-      }
-    }
-
+    // Meeting details fetched cleanly and idempotently
     res.json({
       success: true,
       data: meeting
@@ -214,8 +191,8 @@ router.post('/:id/end', protect, async (req, res, next) => {
       }));
     }
 
-    // Generate AI intelligence using Google Gemini
-    const aiResults = await generateMeetingSummary(transcriptToUse, meeting.title);
+    // Generate AI intelligence using Google Gemini (with deduplication lock)
+    const aiResults = await generateMeetingSummary(transcriptToUse, meeting.title, meeting._id.toString());
     meeting.summary = aiResults.summary;
     meeting.topicsCovered = aiResults.topicsCovered;
     meeting.keyTakeaways = aiResults.keyTakeaways;
@@ -269,7 +246,7 @@ router.post('/:id/ai-intelligence', protect, async (req, res, next) => {
       meeting.transcript = transcript;
     }
 
-    const aiResults = await generateMeetingSummary(targetTranscript, meeting.title);
+    const aiResults = await generateMeetingSummary(targetTranscript, meeting.title, meeting._id.toString());
     meeting.summary = aiResults.summary;
     meeting.topicsCovered = aiResults.topicsCovered;
     meeting.keyTakeaways = aiResults.keyTakeaways;

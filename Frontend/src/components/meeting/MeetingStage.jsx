@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { ParticipantTile } from './ParticipantTile.jsx';
 import {
   Monitor,
@@ -7,7 +7,10 @@ import {
   Grid,
   Square,
   Shield,
-  Radio
+  Radio,
+  ChevronLeft,
+  ChevronRight,
+  Users
 } from 'lucide-react';
 
 export const MeetingStage = ({
@@ -321,26 +324,46 @@ export const MeetingStage = ({
   }
 
   // ----------------------------------------------------
-  // SCENARIO 2: INTELLIGENT BALANCED GRID LAYOUT
+  // SCENARIO 2: INTELLIGENT BALANCED GRID LAYOUT (1 to 60+ Participants)
   // ----------------------------------------------------
-  const allParticipants = [localParticipantObj, ...remoteParticipants];
-  const count = allParticipants.length;
+  const [currentPage, setCurrentPage] = useState(1);
+  const TILES_PER_PAGE = 9; // 3x3 layout for smooth 60fps WebRTC rendering
 
-  // Calculate dynamic responsive grid configuration
+  // Sort participants with active speaker prioritization
+  const sortedParticipants = useMemo(() => {
+    const list = [localParticipantObj, ...remoteParticipants];
+    return list.slice().sort((a, b) => {
+      // Keep local user or active speaker up front
+      if (a.socketId === 'local') return -1;
+      if (b.socketId === 'local') return 1;
+      if (a.isSpeaking && !b.isSpeaking) return -1;
+      if (!a.isSpeaking && b.isSpeaking) return 1;
+      return 0;
+    });
+  }, [localParticipantObj, remoteParticipants, activeSpeakerId]);
+
+  const count = sortedParticipants.length;
+  const totalPages = Math.ceil(count / TILES_PER_PAGE) || 1;
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const startIndex = (safeCurrentPage - 1) * TILES_PER_PAGE;
+  const visibleParticipants = sortedParticipants.slice(startIndex, startIndex + TILES_PER_PAGE);
+  const visibleCount = visibleParticipants.length;
+
+  // Calculate dynamic responsive grid configuration for visible page
   let gridColumns = '1fr';
   let maxWidth = '840px';
-  if (count === 2) {
+  if (visibleCount === 2) {
     gridColumns = 'repeat(auto-fit, minmax(320px, 1fr))';
     maxWidth = '1120px';
-  } else if (count >= 3 && count <= 4) {
+  } else if (visibleCount >= 3 && visibleCount <= 4) {
     gridColumns = 'repeat(2, 1fr)';
     maxWidth = '1160px';
-  } else if (count >= 5 && count <= 6) {
+  } else if (visibleCount >= 5 && visibleCount <= 6) {
     gridColumns = 'repeat(3, 1fr)';
     maxWidth = '1280px';
-  } else if (count > 6) {
-    gridColumns = 'repeat(auto-fit, minmax(280px, 1fr))';
-    maxWidth = '100%';
+  } else if (visibleCount > 6) {
+    gridColumns = 'repeat(3, 1fr)';
+    maxWidth = '1380px';
   }
 
   return (
@@ -349,13 +372,75 @@ export const MeetingStage = ({
       style={{
         flex: 1,
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
         padding: '16px',
         overflowY: 'auto',
-        height: '100%'
+        height: '100%',
+        position: 'relative'
       }}
     >
+      {/* Floating Pagination Pill for 20-60 Participants */}
+      {totalPages > 1 && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '16px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(10, 15, 28, 0.92)',
+            backdropFilter: 'blur(20px)',
+            border: '1px solid rgba(99, 102, 241, 0.35)',
+            borderRadius: '24px',
+            padding: '4px 14px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            zIndex: 25,
+            boxShadow: 'var(--shadow-md)'
+          }}
+        >
+          <button
+            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+            disabled={safeCurrentPage === 1}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: safeCurrentPage === 1 ? 'var(--text-dim)' : '#ffffff',
+              cursor: safeCurrentPage === 1 ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              padding: '2px'
+            }}
+            title="Previous Page"
+          >
+            <ChevronLeft size={16} />
+          </button>
+
+          <span style={{ fontSize: '0.78rem', color: '#c7d2fe', fontWeight: 600 }}>
+            Page {safeCurrentPage} of {totalPages} &nbsp;•&nbsp; {count} Participants
+          </span>
+
+          <button
+            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+            disabled={safeCurrentPage === totalPages}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: safeCurrentPage === totalPages ? 'var(--text-dim)' : '#ffffff',
+              cursor: safeCurrentPage === totalPages ? 'not-allowed' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              padding: '2px'
+            }}
+            title="Next Page"
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      )}
+
       <div
         className="meeting-grid-canvas"
         style={{
@@ -369,7 +454,7 @@ export const MeetingStage = ({
           margin: 'auto'
         }}
       >
-        {allParticipants.map((peer) => {
+        {visibleParticipants.map((peer) => {
           const isPeerLocal = peer.socketId === 'local';
           const peerStream = isPeerLocal ? localStream : remoteStreams[peer.socketId];
           return (
@@ -377,7 +462,7 @@ export const MeetingStage = ({
               key={peer.socketId}
               style={{
                 width: '100%',
-                maxHeight: count <= 2 ? '68vh' : '44vh',
+                maxHeight: visibleCount <= 2 ? '68vh' : '44vh',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'

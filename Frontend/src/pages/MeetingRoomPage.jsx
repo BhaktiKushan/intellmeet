@@ -27,8 +27,24 @@ const ICE_SERVERS = {
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' }
-  ]
+    { urls: 'stun:stun.relay.metered.ca:80' },
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
+  ],
+  iceCandidatePoolSize: 10
 };
 
 export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLobby }) => {
@@ -76,6 +92,11 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
   const [showLiveTranscript, setShowLiveTranscript] = useState(true);
   const [latestTranscript, setLatestTranscript] = useState(null);
   const [transcriptLog, setTranscriptLog] = useState([]);
+  const [targetLanguage, setTargetLanguage] = useState('none'); // 'none' | 'hi' | 'es' | 'fr' | 'de' | 'ja' | 'zh' | 'ar' | 'pt' | 'ru'
+  const targetLanguageRef = useRef('none');
+  useEffect(() => {
+    targetLanguageRef.current = targetLanguage;
+  }, [targetLanguage]);
   const [copiedCode, setCopiedCode] = useState(false);
 
   // Recording State
@@ -937,11 +958,46 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       });
     });
 
+    // Live AI Speech Translation updates
+    socket.on('translation-update', (transItem) => {
+      setLatestTranscript(prev => ({
+        ...(prev || {}),
+        speaker: transItem.speaker,
+        text: transItem.originalText || prev?.text,
+        translation: transItem.translatedText,
+        targetLanguage: transItem.targetLanguage,
+        timestamp: transItem.timestamp
+      }));
+      setTranscriptLog(prev => {
+        const updated = [...prev];
+        const lastIdx = updated.findLastIndex(t => t.speaker === transItem.speaker && (t.text === transItem.originalText || !t.translation));
+        if (lastIdx !== -1) {
+          updated[lastIdx] = {
+            ...updated[lastIdx],
+            translation: transItem.translatedText,
+            targetLanguage: transItem.targetLanguage
+          };
+          transcriptLogRef.current = updated;
+          return updated;
+        }
+        const next = [...prev, {
+          speaker: transItem.speaker,
+          userId: transItem.userId,
+          text: transItem.originalText,
+          translation: transItem.translatedText,
+          targetLanguage: transItem.targetLanguage,
+          timestamp: transItem.timestamp
+        }];
+        transcriptLogRef.current = next;
+        return next;
+      });
+    });
+
     // Start Web Speech API transcription
     initSpeechRecognition(socket);
   };
 
-  // Browser Web Speech API for AI Speech-to-Text
+  // Browser Web Speech API for AI Speech-to-Text & Translation
   const initSpeechRecognition = (socket) => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
@@ -951,15 +1007,33 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         recognition.interimResults = false;
         recognition.lang = 'en-US';
 
-        recognition.onresult = (event) => {
+        recognition.onresult = async (event) => {
           const current = event.resultIndex;
           const transcriptText = event.results[current][0].transcript;
           if (transcriptText.trim()) {
+            const rawText = transcriptText.trim();
+            const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            
+            let translationText = '';
+            const currentLang = targetLanguageRef.current;
+            if (currentLang && currentLang !== 'none') {
+              try {
+                const transRes = await api.translateText(rawText, currentLang);
+                if (transRes?.data?.translatedText) {
+                  translationText = transRes.data.translatedText;
+                }
+              } catch (e) {
+                console.warn('[SpeechRecognition] Translation notice:', e.message);
+              }
+            }
+
             const transcriptItem = {
               speaker: user?.name || 'Speaker',
-              userId: user?._id,
-              text: transcriptText.trim(),
-              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+              userId: user?._id || null,
+              text: rawText,
+              translation: translationText,
+              targetLanguage: currentLang !== 'none' ? currentLang : '',
+              timestamp
             };
             setLatestTranscript(transcriptItem);
             setTranscriptLog(prev => {
@@ -967,7 +1041,22 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
               transcriptLogRef.current = next;
               return next;
             });
-            socket.emit('live-transcript', { roomId, item: transcriptItem });
+            if (socket) {
+              socket.emit('live-transcript', { roomId, item: transcriptItem });
+              if (translationText) {
+                socket.emit('live-translation', {
+                  roomId,
+                  item: {
+                    speaker: transcriptItem.speaker,
+                    userId: transcriptItem.userId,
+                    originalText: rawText,
+                    translatedText: translationText,
+                    targetLanguage: currentLang,
+                    timestamp
+                  }
+                });
+              }
+            }
           }
         };
 
@@ -1687,17 +1776,29 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
               <Sparkles size={16} color="#818cf8" />
             </div>
             <div style={{ flex: 1, textAlign: 'left' }}>
-              <div style={{ fontSize: '0.72rem', color: '#818cf8', fontWeight: 700 }}>
-                {latestTranscript.speaker} &nbsp;•&nbsp; {latestTranscript.timestamp}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '3px' }}>
+                <span style={{ fontSize: '0.72rem', color: '#818cf8', fontWeight: 700 }}>
+                  {latestTranscript.speaker} &nbsp;•&nbsp; {latestTranscript.timestamp}
+                </span>
+                {latestTranscript.translation && (
+                  <span style={{ fontSize: '0.68rem', background: 'rgba(99, 102, 241, 0.25)', color: '#c7d2fe', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                    AI Translated ({latestTranscript.targetLanguage?.toUpperCase() || 'LIVE'})
+                  </span>
+                )}
               </div>
               <div style={{ fontSize: '0.88rem', color: '#f8fafc', fontWeight: 500 }}>
                 "{latestTranscript.text}"
               </div>
+              {latestTranscript.translation && (
+                <div style={{ fontSize: '0.84rem', color: '#38bdf8', fontWeight: 500, marginTop: '4px', borderTop: '1px solid rgba(255, 255, 255, 0.08)', paddingTop: '4px' }}>
+                  🌐 {latestTranscript.translation}
+                </div>
+              )}
             </div>
           </div>
         )}
 
-        {/* Slide-out Side Drawer (Chat, Participants, Notes, Info) */}
+        {/* Slide-out Side Drawer (Chat, Participants, Transcript & Translations, Notes, Info) */}
         <MeetingSideDrawer
           activeTab={activeTab}
           onClose={() => setActiveTab(null)}
@@ -1717,6 +1818,9 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
           onUpdateNotes={setSharedNotes}
           roomId={roomId}
           meeting={meeting}
+          transcriptLog={transcriptLog}
+          targetLanguage={targetLanguage}
+          onSelectTargetLanguage={setTargetLanguage}
         />
       </div>
 
@@ -1733,6 +1837,8 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         onToggleRecording={handleOpenRecordingDialog}
         showLiveTranscript={showLiveTranscript}
         onToggleLiveTranscript={() => setShowLiveTranscript(!showLiveTranscript)}
+        targetLanguage={targetLanguage}
+        onSelectTargetLanguage={setTargetLanguage}
         isHandRaised={isHandRaised}
         onToggleHand={toggleHand}
         activeTab={activeTab}

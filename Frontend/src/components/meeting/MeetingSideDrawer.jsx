@@ -17,7 +17,9 @@ import {
   Unlock,
   Check,
   Copy,
-  Info
+  Info,
+  Sparkles,
+  Globe
 } from 'lucide-react';
 
 export const MeetingSideDrawer = ({
@@ -38,11 +40,16 @@ export const MeetingSideDrawer = ({
   sharedNotes = '',
   onUpdateNotes,
   roomId,
-  meeting
+  meeting,
+  transcriptLog = [],
+  targetLanguage = 'none',
+  onSelectTargetLanguage
 }) => {
   const [chatInput, setChatInput] = useState('');
   const [participantSearch, setParticipantSearch] = useState('');
+  const [transcriptSearch, setTranscriptSearch] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedTranscript, setCopiedTranscript] = useState(false);
 
   if (!activeTab) return null;
 
@@ -57,6 +64,20 @@ export const MeetingSideDrawer = ({
     navigator.clipboard.writeText(window.location.href);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
+  };
+
+  const copyFullTranscript = () => {
+    if (!transcriptLog || transcriptLog.length === 0) return;
+    const formatted = transcriptLog.map(t => {
+      let turn = `[${t.timestamp || '00:00'}] ${t.speaker || 'Participant'}: ${t.text}`;
+      if (t.translation) {
+        turn += `\n  🌐 (${(t.targetLanguage || 'Translated').toUpperCase()}): ${t.translation}`;
+      }
+      return turn;
+    }).join('\n\n');
+    navigator.clipboard.writeText(formatted);
+    setCopiedTranscript(true);
+    setTimeout(() => setCopiedTranscript(false), 2000);
   };
 
   // Filter participants
@@ -106,11 +127,13 @@ export const MeetingSideDrawer = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           {activeTab === 'chat' && <MessageSquare size={18} color="#818cf8" />}
           {activeTab === 'participants' && <Users size={18} color="#818cf8" />}
+          {activeTab === 'transcript' && <Sparkles size={18} color="#818cf8" />}
           {activeTab === 'notes' && <Edit3 size={18} color="#818cf8" />}
           {activeTab === 'info' && <Info size={18} color="#818cf8" />}
           <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#ffffff' }}>
             {activeTab === 'chat' && 'In-Meeting Chat'}
             {activeTab === 'participants' && `Participants (${allParticipants.length})`}
+            {activeTab === 'transcript' && 'Live AI Transcript & Translation'}
             {activeTab === 'notes' && 'Shared Collaborative Notes'}
             {activeTab === 'info' && 'Meeting Information'}
           </h3>
@@ -379,6 +402,147 @@ export const MeetingSideDrawer = ({
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* ---------------- TRANSCRIPT & TRANSLATION TAB ---------------- */}
+      {activeTab === 'transcript' && (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {/* Controls Bar: Target Language + Search */}
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-subtle)', background: 'rgba(15, 23, 42, 0.4)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#a5b4fc', fontWeight: 600 }}>
+                <Globe size={15} color="#818cf8" />
+                <span>Live AI Translation:</span>
+              </div>
+              <select
+                value={targetLanguage}
+                onChange={(e) => onSelectTargetLanguage?.(e.target.value)}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.08)',
+                  color: '#ffffff',
+                  border: '1px solid var(--border-subtle)',
+                  borderRadius: '6px',
+                  padding: '4px 8px',
+                  fontSize: '0.78rem',
+                  outline: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="none">Off (Original Audio)</option>
+                <option value="hi">Hindi (हिन्दी)</option>
+                <option value="es">Spanish (Español)</option>
+                <option value="fr">French (Français)</option>
+                <option value="de">German (Deutsch)</option>
+                <option value="ja">Japanese (日本語)</option>
+                <option value="zh">Chinese (中文)</option>
+                <option value="ar">Arabic (العربية)</option>
+                <option value="pt">Portuguese (Português)</option>
+                <option value="ru">Russian (Русский)</option>
+                <option value="it">Italian (Italiano)</option>
+                <option value="bn">Bengali (বাংলা)</option>
+              </select>
+            </div>
+
+            <div style={{ position: 'relative' }}>
+              <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)' }} />
+              <input
+                type="text"
+                value={transcriptSearch}
+                onChange={(e) => setTranscriptSearch(e.target.value)}
+                placeholder="Search spoken turns..."
+                style={{
+                  width: '100%',
+                  padding: '6px 10px 6px 30px',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border-subtle)',
+                  background: 'rgba(255, 255, 255, 0.05)',
+                  color: '#ffffff',
+                  fontSize: '0.8rem',
+                  outline: 'none'
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Transcript Turns List */}
+          <div style={{
+            flex: 1,
+            padding: '16px',
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '12px'
+          }}>
+            {transcriptLog.length === 0 ? (
+              <div style={{ textAlign: 'center', margin: 'auto', color: 'var(--text-dim)', padding: '24px' }}>
+                <Sparkles size={28} color="#818cf8" style={{ marginBottom: '8px', opacity: 0.8 }} />
+                <p style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-muted)' }}>
+                  Listening for meeting speech...
+                </p>
+                <p style={{ fontSize: '0.78rem', marginTop: '6px' }}>
+                  Speak through your microphone to see continuous real-time transcription and multilingual AI translation.
+                </p>
+              </div>
+            ) : (
+              transcriptLog
+                .filter(t => !transcriptSearch || (t.text || '').toLowerCase().includes(transcriptSearch.toLowerCase()) || (t.translation || '').toLowerCase().includes(transcriptSearch.toLowerCase()) || (t.speaker || '').toLowerCase().includes(transcriptSearch.toLowerCase()))
+                .map((turn, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.03)',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: '10px',
+                      padding: '10px 12px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#818cf8' }}>
+                        {turn.speaker || 'Speaker'}
+                      </span>
+                      <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>
+                        {turn.timestamp || '00:00'}
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: '0.84rem', color: '#f8fafc', lineHeight: 1.4 }}>
+                      "{turn.text}"
+                    </div>
+
+                    {turn.translation && (
+                      <div style={{
+                        marginTop: '6px',
+                        paddingTop: '6px',
+                        borderTop: '1px solid rgba(255, 255, 255, 0.06)',
+                        fontSize: '0.82rem',
+                        color: '#38bdf8',
+                        lineHeight: 1.4
+                      }}>
+                        <span style={{ fontSize: '0.68rem', background: 'rgba(56, 189, 248, 0.15)', color: '#7dd3fc', padding: '1px 5px', borderRadius: '3px', marginRight: '6px', fontWeight: 700 }}>
+                          {(turn.targetLanguage || targetLanguage).toUpperCase()}
+                        </span>
+                        {turn.translation}
+                      </div>
+                    )}
+                  </div>
+                ))
+            )}
+          </div>
+
+          {/* Transcript Bottom Action */}
+          {transcriptLog.length > 0 && (
+            <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-subtle)', background: 'rgba(10, 15, 26, 0.8)' }}>
+              <button
+                onClick={copyFullTranscript}
+                className="btn btn-secondary"
+                style={{ width: '100%', padding: '8px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+              >
+                {copiedTranscript ? <Check size={14} color="#34d399" /> : <Copy size={14} />}
+                <span>{copiedTranscript ? 'Copied Full Transcript!' : 'Copy Entire Transcript'}</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 

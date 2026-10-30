@@ -192,6 +192,44 @@ test('IntellMeet Complete Enterprise Test Suite', async (suite) => {
       assert.equal(body.success, true);
       assert.ok(Array.isArray(body.data));
     });
+
+    await t.test('9. AI Speech Translation endpoint translates text into target languages', async () => {
+      const res = await fetch(`${SERVER_URL}/api/ai/translate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          text: 'Good morning everyone, let us start the meeting.',
+          targetLanguage: 'es'
+        })
+      });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.success, true);
+      assert.equal(body.data.targetLanguage, 'es');
+      assert.ok(body.data.translatedText, 'Should return translated text');
+    });
+
+    await t.test('10. AI summary returns accurate empty state when no transcript was recorded', async () => {
+      const res = await fetch(`${SERVER_URL}/api/ai/summarize`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          transcript: [],
+          title: 'Empty Meeting'
+        })
+      });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.success, true);
+      assert.ok(body.data.summary.includes('No spoken transcript'), 'Must not generate fake summary');
+      assert.equal(body.data.actionItems.length, 0, 'Action items must be empty when no conversation exists');
+    });
   });
 
   await suite.test('Part 2: Real-Time WebRTC Signaling, Screen Share & Host Controls', async (t) => {
@@ -273,6 +311,49 @@ test('IntellMeet Complete Enterprise Test Suite', async (suite) => {
       });
 
       await forceMutePromise;
+    });
+
+    await t.test('5b. Live Speech Transcription broadcasts transcript-update to room', async () => {
+      const transcriptPromise = new Promise((resolve) => {
+        client1.once('transcript-update', (data) => {
+          assert.equal(data.speaker, 'Participant Sarah');
+          assert.equal(data.text, 'We are verifying the live speech transcription engine.');
+          resolve();
+        });
+      });
+
+      client2.emit('live-transcript', {
+        roomId: testRoomId,
+        item: {
+          speaker: 'Participant Sarah',
+          text: 'We are verifying the live speech transcription engine.'
+        }
+      });
+
+      await transcriptPromise;
+    });
+
+    await t.test('5c. Live AI Translation broadcasts translation-update to room', async () => {
+      const translationPromise = new Promise((resolve) => {
+        client1.once('translation-update', (data) => {
+          assert.equal(data.speaker, 'Participant Sarah');
+          assert.equal(data.targetLanguage, 'es');
+          assert.ok(data.translatedText.length > 0);
+          resolve();
+        });
+      });
+
+      client2.emit('live-translation', {
+        roomId: testRoomId,
+        item: {
+          speaker: 'Participant Sarah',
+          originalText: 'Hello everyone',
+          translatedText: 'Hola a todos',
+          targetLanguage: 'es'
+        }
+      });
+
+      await translationPromise;
     });
 
     await t.test('6. Host kicks Client 2, Client 2 receives kicked-from-meeting notification', async () => {
