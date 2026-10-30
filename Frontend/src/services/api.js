@@ -134,6 +134,16 @@ export const api = {
     return handleResponse(res);
   },
 
+  // AI Live Topic Detection
+  detectTopic: async (recentTurns, title = 'Meeting Discussion') => {
+    const res = await fetch(`${API_BASE}/ai/detect-topic`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ recentTurns, title })
+    });
+    return handleResponse(res);
+  },
+
   // Tasks (Kanban)
   getTasks: async (filters = {}) => {
     const queryString = new URLSearchParams(filters).toString();

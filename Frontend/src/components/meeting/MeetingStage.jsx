@@ -35,6 +35,23 @@ export const MeetingStage = ({
   const [pinnedSocketId, setPinnedSocketId] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
+  // Viewport & Orientation Detection for Mobile & Desktop
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 768);
+  const [isPortrait, setIsPortrait] = useState(() => typeof window !== 'undefined' && window.innerHeight > window.innerWidth);
+
+  React.useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth <= 768);
+      setIsPortrait(window.innerHeight > window.innerWidth);
+    };
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('orientationchange', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('orientationchange', handleResize);
+    };
+  }, []);
+
   // Assemble full participant list including local user
   const localParticipantObj = {
     socketId: 'local',
@@ -74,13 +91,23 @@ export const MeetingStage = ({
   };
 
   const toggleFullscreen = () => {
-    const stageEl = document.getElementById('meeting-stage-container');
+    const stageEl = document.getElementById('meeting-stage-container') || document.documentElement;
     if (!stageEl) return;
 
-    if (!document.fullscreenElement) {
-      stageEl.requestFullscreen?.().then(() => setIsFullscreen(true)).catch(() => {});
+    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+      if (stageEl.requestFullscreen) {
+        stageEl.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {});
+      } else if (stageEl.webkitRequestFullscreen) {
+        stageEl.webkitRequestFullscreen();
+        setIsFullscreen(true);
+      }
     } else {
-      document.exitFullscreen?.().then(() => setIsFullscreen(false)).catch(() => {});
+      if (document.exitFullscreen) {
+        document.exitFullscreen().then(() => setIsFullscreen(false)).catch(() => {});
+      } else if (document.webkitExitFullscreen) {
+        document.webkitExitFullscreen();
+        setIsFullscreen(false);
+      }
     }
   };
 
@@ -327,7 +354,7 @@ export const MeetingStage = ({
   // SCENARIO 2: INTELLIGENT BALANCED GRID LAYOUT (1 to 60+ Participants)
   // ----------------------------------------------------
   const [currentPage, setCurrentPage] = useState(1);
-  const TILES_PER_PAGE = 9; // 3x3 layout for smooth 60fps WebRTC rendering
+  const TILES_PER_PAGE = isMobile ? (isPortrait ? 4 : 4) : 9;
 
   // Sort participants with active speaker prioritization
   const sortedParticipants = useMemo(() => {
@@ -351,19 +378,52 @@ export const MeetingStage = ({
 
   // Calculate dynamic responsive grid configuration for visible page
   let gridColumns = '1fr';
+  let gridRows = 'none';
   let maxWidth = '840px';
-  if (visibleCount === 2) {
-    gridColumns = 'repeat(auto-fit, minmax(320px, 1fr))';
-    maxWidth = '1120px';
-  } else if (visibleCount >= 3 && visibleCount <= 4) {
-    gridColumns = 'repeat(2, 1fr)';
-    maxWidth = '1160px';
-  } else if (visibleCount >= 5 && visibleCount <= 6) {
-    gridColumns = 'repeat(3, 1fr)';
-    maxWidth = '1280px';
-  } else if (visibleCount > 6) {
-    gridColumns = 'repeat(3, 1fr)';
-    maxWidth = '1380px';
+  let tileAspectRatio = '16/9';
+  let tileMaxHeight = '44vh';
+
+  if (isMobile && isPortrait) {
+    maxWidth = '100%';
+    if (visibleCount === 1) {
+      gridColumns = '1fr';
+      tileAspectRatio = 'auto';
+      tileMaxHeight = '100%';
+    } else if (visibleCount === 2) {
+      gridColumns = '1fr';
+      gridRows = '1fr 1fr';
+      tileAspectRatio = 'auto';
+      tileMaxHeight = 'calc(50vh - 54px)';
+    } else {
+      // 3 or 4 participants
+      gridColumns = '1fr 1fr';
+      gridRows = '1fr 1fr';
+      tileAspectRatio = '4/3';
+      tileMaxHeight = 'calc(50vh - 54px)';
+    }
+  } else {
+    // Landscape or Desktop
+    if (visibleCount === 1) {
+      gridColumns = '1fr';
+      maxWidth = '960px';
+      tileMaxHeight = '72vh';
+    } else if (visibleCount === 2) {
+      gridColumns = 'repeat(2, 1fr)';
+      maxWidth = '1120px';
+      tileMaxHeight = '68vh';
+    } else if (visibleCount >= 3 && visibleCount <= 4) {
+      gridColumns = 'repeat(2, 1fr)';
+      maxWidth = '1160px';
+      tileMaxHeight = '44vh';
+    } else if (visibleCount >= 5 && visibleCount <= 6) {
+      gridColumns = 'repeat(3, 1fr)';
+      maxWidth = '1280px';
+      tileMaxHeight = '44vh';
+    } else if (visibleCount > 6) {
+      gridColumns = 'repeat(3, 1fr)';
+      maxWidth = '1380px';
+      tileMaxHeight = '32vh';
+    }
   }
 
   return (
@@ -375,12 +435,37 @@ export const MeetingStage = ({
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '16px',
+        padding: isMobile ? '8px' : '16px',
         overflowY: 'auto',
         height: '100%',
         position: 'relative'
       }}
     >
+      {/* Quick Fullscreen Toggle Button in Grid Mode */}
+      <button
+        onClick={toggleFullscreen}
+        style={{
+          position: 'absolute',
+          top: '16px',
+          right: '16px',
+          background: 'rgba(10, 15, 28, 0.85)',
+          backdropFilter: 'blur(12px)',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+          color: '#ffffff',
+          width: '36px',
+          height: '36px',
+          borderRadius: '50%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'pointer',
+          zIndex: 20
+        }}
+        title={isFullscreen ? 'Exit Fullscreen' : 'View Fullscreen'}
+      >
+        {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+      </button>
+
       {/* Floating Pagination Pill for 20-60 Participants */}
       {totalPages > 1 && (
         <div
@@ -445,10 +530,12 @@ export const MeetingStage = ({
         className="meeting-grid-canvas"
         style={{
           width: '100%',
+          height: isMobile && isPortrait && visibleCount <= 4 ? '100%' : 'auto',
           maxWidth,
           display: 'grid',
           gridTemplateColumns: gridColumns,
-          gap: '14px',
+          gridTemplateRows: gridRows,
+          gap: isMobile ? '8px' : '14px',
           alignItems: 'center',
           justifyContent: 'center',
           margin: 'auto'
@@ -462,7 +549,8 @@ export const MeetingStage = ({
               key={peer.socketId}
               style={{
                 width: '100%',
-                maxHeight: visibleCount <= 2 ? '68vh' : '44vh',
+                height: isMobile && isPortrait ? '100%' : 'auto',
+                maxHeight: tileMaxHeight,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'
@@ -478,7 +566,7 @@ export const MeetingStage = ({
                 currentUserId={currentUserId}
                 onHostMute={onHostMute}
                 onHostKick={onHostKick}
-                aspectRatio="16/9"
+                aspectRatio={tileAspectRatio}
               />
             </div>
           );

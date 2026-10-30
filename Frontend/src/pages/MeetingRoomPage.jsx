@@ -18,7 +18,13 @@ import {
   Check,
   Radio,
   Shield,
-  Volume2
+  Volume2,
+  VolumeX,
+  ChevronDown,
+  ChevronUp,
+  Lightbulb,
+  Maximize2,
+  Minimize2
 } from 'lucide-react';
 
 const ICE_SERVERS = {
@@ -45,6 +51,52 @@ const ICE_SERVERS = {
     }
   ],
   iceCandidatePoolSize: 10
+};
+
+// Persistent Global Audio Element: guarantees remote voices never drop during pagination, grid changes, or screen resizing
+const PersistentRemoteAudio = ({ socketId, stream, onAutoplayBlocked }) => {
+  const audioRef = useRef(null);
+
+  useEffect(() => {
+    const el = audioRef.current;
+    if (!el || !stream) return;
+
+    if (el.srcObject !== stream) {
+      el.srcObject = stream;
+    }
+
+    const p = el.play();
+    if (p !== undefined) {
+      p.catch((err) => {
+        if (err.name === 'NotAllowedError') {
+          onAutoplayBlocked?.(true);
+        }
+      });
+    }
+
+    const handleTrackEvent = () => {
+      const playPromise = el.play();
+      if (playPromise !== undefined) playPromise.catch(() => {});
+    };
+
+    stream.addEventListener('addtrack', handleTrackEvent);
+    stream.addEventListener('removetrack', handleTrackEvent);
+
+    return () => {
+      stream.removeEventListener('addtrack', handleTrackEvent);
+      stream.removeEventListener('removetrack', handleTrackEvent);
+    };
+  }, [stream, socketId, onAutoplayBlocked]);
+
+  return (
+    <audio
+      ref={audioRef}
+      autoPlay
+      playsInline
+      style={{ display: 'none' }}
+      aria-hidden="true"
+    />
+  );
 };
 
 export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLobby }) => {
@@ -98,6 +150,20 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
     targetLanguageRef.current = targetLanguage;
   }, [targetLanguage]);
   const [copiedCode, setCopiedCode] = useState(false);
+
+  // Live Topic & Mobile Audio Stability State
+  const [liveTopic, setLiveTopic] = useState(null);
+  const [showLiveTopic, setShowLiveTopic] = useState(true);
+  const [autoplayBlocked, setAutoplayBlocked] = useState(false);
+
+  const unlockAudio = useCallback(() => {
+    document.querySelectorAll('audio').forEach(a => {
+      if (a.paused && a.srcObject) {
+        a.play().catch(() => {});
+      }
+    });
+    setAutoplayBlocked(false);
+  }, []);
 
   // Recording State
   const [isRecording, setIsRecording] = useState(false);
@@ -993,6 +1059,13 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       });
     });
 
+    // Real-Time Live AI Topic Detection updates
+    socket.on('topic-detected', (topicData) => {
+      if (topicData && topicData.topic) {
+        setLiveTopic(topicData);
+      }
+    });
+
     // Start Web Speech API transcription
     initSpeechRecognition(socket);
   };
@@ -1717,8 +1790,121 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         </div>
       </header>
 
+      {/* Persistent Global Audio Mesh: guarantees remote voices never drop during pagination, grid changes, or screen resizing */}
+      <div style={{ display: 'none' }} aria-hidden="true">
+        {Object.entries(remoteStreams).map(([sId, stream]) => (
+          <PersistentRemoteAudio
+            key={sId}
+            socketId={sId}
+            stream={stream}
+            onAutoplayBlocked={() => setAutoplayBlocked(true)}
+          />
+        ))}
+      </div>
+
+      {/* Mobile Autoplay Permission Recovery Banner */}
+      {autoplayBlocked && (
+        <div
+          onClick={unlockAudio}
+          style={{
+            position: 'absolute',
+            top: '72px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+            color: '#ffffff',
+            padding: '8px 18px',
+            borderRadius: '24px',
+            boxShadow: '0 8px 24px rgba(245, 158, 11, 0.4)',
+            zIndex: 45,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            cursor: 'pointer',
+            fontSize: '0.82rem',
+            fontWeight: 700,
+            animation: 'fadeIn 0.2s ease'
+          }}
+        >
+          <Volume2 size={16} />
+          <span>Audio paused by mobile browser. Tap here to enable participant voices.</span>
+        </div>
+      )}
+
+      {/* Real-Time Live AI Topic Detection Banner */}
+      {liveTopic && liveTopic.topic && (
+        <div
+          className="live-topic-dock-pill"
+          style={{
+            position: 'absolute',
+            top: '72px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            maxWidth: '680px',
+            width: '92%',
+            background: 'rgba(15, 23, 42, 0.94)',
+            backdropFilter: 'blur(16px)',
+            border: '1px solid rgba(99, 102, 241, 0.4)',
+            borderRadius: '12px',
+            padding: showLiveTopic ? '10px 16px' : '6px 14px',
+            zIndex: 28,
+            boxShadow: 'var(--shadow-md)',
+            transition: 'all 0.25s ease'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
+              <span style={{ background: 'rgba(99, 102, 241, 0.2)', color: '#818cf8', padding: '2px 6px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>
+                CURRENT TOPIC
+              </span>
+              <h4 style={{ fontSize: '0.86rem', fontWeight: 700, color: '#ffffff', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {liveTopic.topic}
+              </h4>
+            </div>
+
+            <button
+              onClick={() => setShowLiveTopic(!showLiveTopic)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-dim)',
+                cursor: 'pointer',
+                padding: '2px',
+                display: 'flex',
+                alignItems: 'center'
+              }}
+              title={showLiveTopic ? 'Minimize topic' : 'Expand topic'}
+            >
+              {showLiveTopic ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            </button>
+          </div>
+
+          {showLiveTopic && (
+            <div style={{ marginTop: '8px', borderTop: '1px solid rgba(255, 255, 255, 0.08)', paddingTop: '8px' }}>
+              {liveTopic.summary && (
+                <p style={{ fontSize: '0.8rem', color: '#cbd5e1', margin: '0 0 6px', lineHeight: 1.4 }}>
+                  {liveTopic.summary}
+                </p>
+              )}
+              {Array.isArray(liveTopic.contributors) && liveTopic.contributors.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                  {liveTopic.contributors.slice(0, 3).map((c, i) => (
+                    <div key={i} style={{ fontSize: '0.76rem', color: '#94a3b8', lineHeight: 1.3 }}>
+                      <strong style={{ color: '#818cf8' }}>{c.speaker}:</strong> {c.point}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Main Workspace Canvas (Video Stage + Side Drawer) */}
-      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
+      <div 
+        onClick={unlockAudio}
+        style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}
+      >
         {/* Intelligent Video Stage (Screen Share Priority, Spotlight, Grid) */}
         <MeetingStage
           localUser={user}
@@ -1743,9 +1929,10 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         {/* Live Speech-to-Text AI Captions Banner */}
         {showLiveTranscript && latestTranscript && (
           <div
+            className="meeting-captions-banner"
             style={{
               position: 'absolute',
-              bottom: '20px',
+              bottom: '24px',
               left: '50%',
               transform: 'translateX(-50%)',
               maxWidth: '680px',

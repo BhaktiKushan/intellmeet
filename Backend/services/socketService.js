@@ -1,4 +1,5 @@
 import Meeting from '../models/Meeting.js';
+import { detectLiveTopic } from './aiService.js';
 
 export const setupSocketIO = (io) => {
   // Store active rooms in-memory: roomId -> { users: Map, hostSocketId, presenter, settings, recording }
@@ -79,6 +80,10 @@ export const setupSocketIO = (io) => {
         recording: room.recording,
         settings: room.settings
       });
+
+      if (room.currentTopic) {
+        socket.emit('topic-detected', room.currentTopic);
+      }
 
       // Notify other participants in the room
       socket.to(roomId).emit('user-connected', participantData);
@@ -389,6 +394,38 @@ export const setupSocketIO = (io) => {
 
       // Broadcast live caption banner to all peers in the room
       io.to(roomId).emit('transcript-update', transcriptItem);
+
+      // Track recent speech turns for real-time live topic detection
+      const room = rooms.get(roomId);
+      if (room) {
+        room.recentTranscript = room.recentTranscript || [];
+        room.recentTranscript.push(transcriptItem);
+        if (room.recentTranscript.length > 25) room.recentTranscript.shift();
+
+        // Trigger topic detection on 3+ turns or every 2 new turns
+        if (room.recentTranscript.length >= 3 && (room.recentTranscript.length % 2 === 1 || !room.currentTopic)) {
+          detectLiveTopic(room.recentTranscript, room.title || 'Team Meeting')
+            .then(topicData => {
+              if (topicData && topicData.topic) {
+                room.currentTopic = topicData;
+                io.to(roomId).emit('topic-detected', topicData);
+                Meeting.findOneAndUpdate(
+                  { code: roomId },
+                  {
+                    $push: {
+                      liveTopicTimeline: {
+                        topic: topicData.topic,
+                        keyPoints: (topicData.contributors || []).map(c => `${c.speaker}: ${c.point}`),
+                        activeSpeaker: transcriptItem.speaker
+                      }
+                    }
+                  }
+                ).catch(() => {});
+              }
+            })
+            .catch(err => console.warn('[Socket] Topic detection note:', err.message));
+        }
+      }
 
       // Persist in Meeting transcript array
       try {

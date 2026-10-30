@@ -290,12 +290,7 @@ export const DashboardPage = ({
       </div>
 
       {/* 3. WORKSPACE METRICS OVERVIEW CARDS */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-        gap: '20px',
-        marginBottom: '36px'
-      }}>
+      <div className="dashboard-stats-grid">
         {/* Metric 1 */}
         <div className="glass-panel" style={{ padding: '22px 24px', borderRadius: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
@@ -395,12 +390,7 @@ export const DashboardPage = ({
       </div>
 
       {/* 4. MAIN DASHBOARD CONTENT: 2 COLUMNS */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1.6fr) minmax(0, 1fr)',
-        gap: '28px',
-        alignItems: 'start'
-      }}>
+      <div className="dashboard-main-grid">
         
         {/* LEFT COLUMN: RECENT MEETINGS & UPCOMING SESSIONS */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>

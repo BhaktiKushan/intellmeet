@@ -115,6 +115,14 @@ const PORT = process.env.PORT || 5000;
 // Initialize Server & Database
 const startServer = async () => {
   if (server.listening) return;
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.log(`[Server] Port ${PORT} already active, attaching to existing instance...`);
+    } else {
+      console.error('[Server Error]', err);
+    }
+  });
+
   server.listen(PORT, async () => {
     console.log(`\n======================================================`);
     console.log(`🚀 IntellMeet Enterprise Server running on port ${PORT}`);

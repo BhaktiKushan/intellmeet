@@ -4,7 +4,7 @@ import { io } from 'socket.io-client';
 import { app, server } from '../server.js';
 
 test('IntellMeet Complete Enterprise Test Suite', async (suite) => {
-  const SERVER_URL = 'http://localhost:5000';
+  const SERVER_URL = 'http://127.0.0.1:5000';
   let authToken = '';
   let testMeetingCode = '';
   let client1 = null;
@@ -173,6 +173,8 @@ test('IntellMeet Complete Enterprise Test Suite', async (suite) => {
       assert.ok(body.data.keyTakeaways.length > 0, 'keyTakeaways should have points');
       assert.ok(Array.isArray(body.data.actionItems), 'actionItems should be an array');
       assert.ok(body.data.actionItems.length > 0, 'actionItems should have items');
+      assert.ok(Array.isArray(body.data.topicsBreakdown), 'topicsBreakdown should be an array');
+      assert.ok(Array.isArray(body.data.personWiseSummary), 'personWiseSummary should be an array');
 
       // Verify that fetching the meeting returns the saved summary
       const getRes = await fetch(`${SERVER_URL}/api/meetings/${testMeetingCode}`, {
@@ -210,6 +212,29 @@ test('IntellMeet Complete Enterprise Test Suite', async (suite) => {
       assert.equal(body.success, true);
       assert.equal(body.data.targetLanguage, 'es');
       assert.ok(body.data.translatedText, 'Should return translated text');
+    });
+
+    await t.test('9b. AI Live Topic Detection endpoint returns detected topic and summary', async () => {
+      const res = await fetch(`${SERVER_URL}/api/ai/detect-topic`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          recentTurns: [
+            { speaker: 'Alice', text: 'Let us discuss our cloud deployment budget and AWS hosting.' },
+            { speaker: 'Bob', text: 'The AWS budget needs to cover our multi-region Kubernetes cluster.' }
+          ],
+          title: 'Cloud Budget Review'
+        })
+      });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.success, true);
+      assert.ok(body.data.topic, 'Topic name should be returned');
+      assert.ok(body.data.summary, 'Topic summary should be returned');
+      assert.ok(Array.isArray(body.data.contributors), 'Contributors should be an array');
     });
 
     await t.test('10. AI summary returns accurate empty state when no transcript was recorded', async () => {

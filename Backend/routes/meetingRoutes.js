@@ -195,6 +195,10 @@ router.post('/:id/end', protect, async (req, res, next) => {
     const aiResults = await generateMeetingSummary(transcriptToUse, meeting.title, meeting._id.toString());
     meeting.summary = aiResults.summary;
     meeting.topicsCovered = aiResults.topicsCovered;
+    meeting.topicsBreakdown = aiResults.topicsBreakdown || [];
+    meeting.personWiseSummary = aiResults.personWiseSummary || [];
+    meeting.problemsIdentified = aiResults.problemsIdentified || [];
+    meeting.solutionsSuggested = aiResults.solutionsSuggested || [];
     meeting.keyTakeaways = aiResults.keyTakeaways;
     meeting.keyDecisions = aiResults.keyDecisions;
     meeting.importantQuestions = aiResults.importantQuestions;
@@ -249,6 +253,10 @@ router.post('/:id/ai-intelligence', protect, async (req, res, next) => {
     const aiResults = await generateMeetingSummary(targetTranscript, meeting.title, meeting._id.toString());
     meeting.summary = aiResults.summary;
     meeting.topicsCovered = aiResults.topicsCovered;
+    meeting.topicsBreakdown = aiResults.topicsBreakdown || [];
+    meeting.personWiseSummary = aiResults.personWiseSummary || [];
+    meeting.problemsIdentified = aiResults.problemsIdentified || [];
+    meeting.solutionsSuggested = aiResults.solutionsSuggested || [];
     meeting.keyTakeaways = aiResults.keyTakeaways;
     meeting.keyDecisions = aiResults.keyDecisions;
     meeting.importantQuestions = aiResults.importantQuestions;
@@ -261,6 +269,10 @@ router.post('/:id/ai-intelligence', protect, async (req, res, next) => {
       data: {
         summary: meeting.summary,
         topicsCovered: meeting.topicsCovered,
+        topicsBreakdown: meeting.topicsBreakdown || [],
+        personWiseSummary: meeting.personWiseSummary || [],
+        problemsIdentified: meeting.problemsIdentified || [],
+        solutionsSuggested: meeting.solutionsSuggested || [],
         keyTakeaways: meeting.keyTakeaways,
         keyDecisions: meeting.keyDecisions,
         importantQuestions: meeting.importantQuestions,

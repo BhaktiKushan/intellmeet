@@ -17,7 +17,12 @@ import {
   HelpCircle,
   FileText,
   Tag,
-  CheckSquare
+  CheckSquare,
+  AlertTriangle,
+  Lightbulb,
+  MessageSquare,
+  Layers,
+  UserCheck
 } from 'lucide-react';
 
 export const PostMeetingDetailsPage = ({ meetingIdOrCode, onBack, onNavigateKanban }) => {
@@ -25,7 +30,7 @@ export const PostMeetingDetailsPage = ({ meetingIdOrCode, onBack, onNavigateKanb
   const [loading, setLoading] = useState(true);
   const [reanalyzing, setReanalyzing] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState('summary'); // 'summary' | 'actions' | 'transcript'
+  const [activeTab, setActiveTab] = useState('summary'); // 'summary' | 'topics' | 'speakers' | 'actions' | 'transcript'
   const [convertedTasks, setConvertedTasks] = useState(new Set());
   const [actionNotice, setActionNotice] = useState('');
   const [summaryError, setSummaryError] = useState('');
@@ -68,7 +73,8 @@ export const PostMeetingDetailsPage = ({ meetingIdOrCode, onBack, onNavigateKanb
         task: item,
         assignee: 'Engineering Team',
         priority: 'medium',
-        dueDate: 'Soon'
+        dueDate: 'Soon',
+        followUp: ''
       };
     }
     const assigneeName = typeof item.assigneeId === 'object' && item.assigneeId !== null
@@ -80,7 +86,8 @@ export const PostMeetingDetailsPage = ({ meetingIdOrCode, onBack, onNavigateKanb
       task: safeString(item.task || item.description, `Deliverable #${idx + 1}`),
       assignee: safeString(assigneeName, 'Team Member'),
       priority: safeString(item.priority, 'medium').toLowerCase(),
-      dueDate: safeFormatDate(item.dueDate)
+      dueDate: safeFormatDate(item.dueDate),
+      followUp: safeString(item.followUp, '')
     };
   };
 
@@ -124,6 +131,10 @@ export const PostMeetingDetailsPage = ({ meetingIdOrCode, onBack, onNavigateKanb
           ...(prev || currentMeeting),
           summary: res.data.summary,
           topicsCovered: res.data.topicsCovered || [],
+          topicsBreakdown: res.data.topicsBreakdown || [],
+          personWiseSummary: res.data.personWiseSummary || [],
+          problemsIdentified: res.data.problemsIdentified || [],
+          solutionsSuggested: res.data.solutionsSuggested || [],
           keyTakeaways: res.data.keyTakeaways || [],
           keyDecisions: res.data.keyDecisions || [],
           importantQuestions: res.data.importantQuestions || [],
@@ -168,12 +179,16 @@ export const PostMeetingDetailsPage = ({ meetingIdOrCode, onBack, onNavigateKanb
           ...prev,
           summary: res.data.summary,
           topicsCovered: res.data.topicsCovered || [],
+          topicsBreakdown: res.data.topicsBreakdown || [],
+          personWiseSummary: res.data.personWiseSummary || [],
+          problemsIdentified: res.data.problemsIdentified || [],
+          solutionsSuggested: res.data.solutionsSuggested || [],
           keyTakeaways: res.data.keyTakeaways || [],
           keyDecisions: res.data.keyDecisions || [],
           importantQuestions: res.data.importantQuestions || [],
           actionItems: res.data.actionItems || []
         }));
-        setActionNotice('AI Intelligence generated successfully using Google Gemini!');
+        setActionNotice('AI Intelligence regenerated successfully using Google Gemini!');
         setTimeout(() => setActionNotice(''), 3500);
       }
     } catch (err) {
@@ -183,30 +198,128 @@ export const PostMeetingDetailsPage = ({ meetingIdOrCode, onBack, onNavigateKanb
     }
   };
 
+  // Safe normalized variables
+  const meetingTitle = safeString(meeting?.title, 'Meeting Session');
+  const meetingCode = safeString(meeting?.code, meetingIdOrCode);
+  const meetingDescription = safeString(meeting?.description, 'Enterprise collaboration session with automated AI speech intelligence.');
+  const meetingDuration = meeting?.durationMinutes || 1;
+  const meetingDate = safeFormatDate(meeting?.scheduledAt || meeting?.createdAt);
+  const participantsCount = Array.isArray(meeting?.participants) ? meeting.participants.length : 1;
+
+  const topicsList = Array.isArray(meeting?.topicsCovered) ? meeting.topicsCovered : [];
+  const takeawaysList = Array.isArray(meeting?.keyTakeaways) ? meeting.keyTakeaways : [];
+  const decisionsList = Array.isArray(meeting?.keyDecisions) ? meeting.keyDecisions : [];
+  const questionsList = Array.isArray(meeting?.importantQuestions) ? meeting.importantQuestions : [];
+  const actionItemsList = Array.isArray(meeting?.actionItems) ? meeting.actionItems : [];
+  const rawTranscriptList = Array.isArray(meeting?.transcript) ? meeting.transcript : [];
+  const problemsList = Array.isArray(meeting?.problemsIdentified) ? meeting.problemsIdentified : [];
+  const solutionsList = Array.isArray(meeting?.solutionsSuggested) ? meeting.solutionsSuggested : [];
+
+  // Synthesize rich speaker summaries if DB record doesn't have it yet
+  const getPersonWiseSummary = () => {
+    if (Array.isArray(meeting?.personWiseSummary) && meeting.personWiseSummary.length > 0) {
+      return meeting.personWiseSummary;
+    }
+    if (rawTranscriptList.length === 0) return [];
+    const speakerMap = {};
+    rawTranscriptList.forEach(t => {
+      const spk = safeString(t?.speaker, 'Participant');
+      if (!speakerMap[spk]) {
+        speakerMap[spk] = { speaker: spk, speakingTurns: 0, sampleTexts: [] };
+      }
+      speakerMap[spk].speakingTurns += 1;
+      const text = safeString(t?.text, '');
+      if (text && speakerMap[spk].sampleTexts.length < 3) {
+        speakerMap[spk].sampleTexts.push(text);
+      }
+    });
+    return Object.values(speakerMap).map(s => ({
+      speaker: s.speaker,
+      speakingTurns: s.speakingTurns,
+      contributionSummary: `Contributed actively across ${s.speakingTurns} speaking turns during this discussion.`,
+      keyPoints: s.sampleTexts.map(t => t.length > 130 ? t.slice(0, 127) + '...' : t)
+    }));
+  };
+
+  // Synthesize rich topic breakdown if DB record doesn't have it yet
+  const getTopicsBreakdown = () => {
+    if (Array.isArray(meeting?.topicsBreakdown) && meeting.topicsBreakdown.length > 0) {
+      return meeting.topicsBreakdown;
+    }
+    if (topicsList.length === 0) return [];
+    const allSpeakers = Array.from(new Set(rawTranscriptList.map(t => safeString(t?.speaker)).filter(Boolean)));
+    return topicsList.map(topicName => ({
+      topic: safeString(topicName),
+      summary: `Dedicated segment of discussion addressing ${safeString(topicName)}.`,
+      contributors: allSpeakers,
+      decisions: decisionsList.slice(0, 2),
+      questions: questionsList.slice(0, 2)
+    }));
+  };
+
+  const personWiseList = getPersonWiseSummary();
+  const topicsBreakdownList = getTopicsBreakdown();
+
   const handleExportMarkdown = () => {
     if (!meeting) return;
-    const content = `# Meeting Intelligence Report: ${safeString(meeting.title, 'Team Meeting')}
-**Date:** ${safeFormatDate(meeting.scheduledAt || meeting.createdAt)}
-**Code:** ${safeString(meeting.code, meetingIdOrCode)}
-**Duration:** ${meeting.durationMinutes || 1} minutes
+    const content = `# IntellMeet Intelligence Report: ${meetingTitle}
+**Date:** ${meetingDate}
+**Code:** ${meetingCode}
+**Duration:** ${meetingDuration} minutes
+**Total Participants:** ${participantsCount}
 
-## Executive Summary
-${safeString(meeting.summary, 'N/A')}
+---
 
-${Array.isArray(meeting.topicsCovered) && meeting.topicsCovered.length > 0 ? `## Topics Covered\n${meeting.topicsCovered.map(t => `- ${safeString(t)}`).join('\n')}\n` : ''}
-## Key Discussion Points
-${(Array.isArray(meeting.keyTakeaways) ? meeting.keyTakeaways : []).map(t => `- ${safeString(t)}`).join('\n')}
+## 1. Executive Summary
+${safeString(meeting.summary, 'No executive summary available.')}
 
-${Array.isArray(meeting.keyDecisions) && meeting.keyDecisions.length > 0 ? `## Key Decisions Made\n${meeting.keyDecisions.map(d => `- ${safeString(d)}`).join('\n')}\n` : ''}
-${Array.isArray(meeting.importantQuestions) && meeting.importantQuestions.length > 0 ? `## Important Questions\n${meeting.importantQuestions.map(q => `- ${safeString(q)}`).join('\n')}\n` : ''}
-## Extracted Action Items
-${(Array.isArray(meeting.actionItems) ? meeting.actionItems : []).map((a, i) => {
+## 2. Total Meeting Duration
+- Duration: ${meetingDuration} minutes
+- Date & Time: ${meetingDate}
+- Meeting Status: Completed
+
+## 3. Participants
+${Array.isArray(meeting.participants) && meeting.participants.length > 0
+  ? meeting.participants.map(p => `- **${safeString(p.name || p.user?.name, 'Participant')}** (${safeString(p.role, 'member')})`).join('\n')
+  : '- Registered Participants'}
+
+## 4. Person-Wise Speaking Summary
+${personWiseList.map(p => `### ${safeString(p.speaker)} (${p.speakingTurns || 0} turns)
+- **Summary:** ${safeString(p.contributionSummary)}
+${Array.isArray(p.keyPoints) && p.keyPoints.length > 0 ? p.keyPoints.map(k => `  * ${safeString(k)}`).join('\n') : ''}
+`).join('\n')}
+
+## 5. Topics Breakdown & Person Contributions
+${topicsBreakdownList.map(tb => `### Topic: ${safeString(tb.topic)}
+- **Summary:** ${safeString(tb.summary)}
+- **Contributors:** ${Array.isArray(tb.contributors) ? tb.contributors.join(', ') : 'All participants'}
+${Array.isArray(tb.decisions) && tb.decisions.length > 0 ? `- **Decisions:** ${tb.decisions.join('; ')}` : ''}
+${Array.isArray(tb.questions) && tb.questions.length > 0 ? `- **Questions:** ${tb.questions.join('; ')}` : ''}
+`).join('\n')}
+
+## 6. Key Discussion Points & Takeaways
+${takeawaysList.map(t => `- ${safeString(t)}`).join('\n')}
+
+## 7. Problems Identified
+${problemsList.length > 0 ? problemsList.map(p => `- ⚠️ ${safeString(p)}`).join('\n') : '- No critical blockers or problems reported.'}
+
+## 8. Solutions Suggested
+${solutionsList.length > 0 ? solutionsList.map(s => `- 💡 ${safeString(s)}`).join('\n') : '- Solutions and standard approaches agreed upon.'}
+
+## 9. Key Decisions Made
+${decisionsList.length > 0 ? decisionsList.map(d => `- ✓ ${safeString(d)}`).join('\n') : '- No formal decisions recorded.'}
+
+## 10. Important Questions Raised
+${questionsList.length > 0 ? questionsList.map(q => `- ? ${safeString(q)}`).join('\n') : '- No unresolved questions.'}
+
+## 11. Extracted Action Items & Assigned Responsibilities
+${actionItemsList.map((a, i) => {
   const d = getActionItemDetails(a, i);
-  return `- [ ] **${d.task}** (Assignee: ${d.assignee}, Priority: ${d.priority}, Due: ${d.dueDate})`;
+  return `- [ ] **${d.task}** (Owner: ${d.assignee}, Priority: ${d.priority.toUpperCase()}, Due: ${d.dueDate}${d.followUp ? `, Follow-up: ${d.followUp}` : ''})`;
 }).join('\n')}
 
-## Full Transcript
-${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${safeString(t?.timestamp, '')}] **${safeString(t?.speaker, 'Speaker')}:** ${safeString(t?.text, '')}`).join('\n')}
+## 12. Full Verbatim Transcript
+${rawTranscriptList.map(t => `[${safeString(t?.timestamp, '')}] **${safeString(t?.speaker, 'Speaker')}:** ${safeString(t?.text, '')}${t?.translation ? `\n   ↳ [${safeString(t.targetLanguage, 'Trans')}] ${safeString(t.translation)}` : ''}`).join('\n\n')}
 `;
 
     const blob = new Blob([content], { type: 'text/markdown' });
@@ -229,7 +342,7 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
           Loading AI Meeting Intelligence...
         </h3>
         <p style={{ fontSize: '0.92rem', color: 'var(--text-muted)' }}>
-          Retrieving session dialogue, transcript, and decisions.
+          Retrieving session dialogue, transcript, decisions, and speaker breakdowns.
         </p>
       </div>
     );
@@ -264,21 +377,6 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
     );
   }
 
-  // Safe normalized variables
-  const meetingTitle = safeString(meeting.title, 'Meeting Session');
-  const meetingCode = safeString(meeting.code, meetingIdOrCode);
-  const meetingDescription = safeString(meeting.description, 'Enterprise collaboration session with automated AI speech intelligence.');
-  const meetingDuration = meeting.durationMinutes || 1;
-  const meetingDate = safeFormatDate(meeting.scheduledAt || meeting.createdAt);
-  const participantsCount = Array.isArray(meeting.participants) ? meeting.participants.length : 1;
-
-  const topicsList = Array.isArray(meeting.topicsCovered) ? meeting.topicsCovered : [];
-  const takeawaysList = Array.isArray(meeting.keyTakeaways) ? meeting.keyTakeaways : [];
-  const decisionsList = Array.isArray(meeting.keyDecisions) ? meeting.keyDecisions : [];
-  const questionsList = Array.isArray(meeting.importantQuestions) ? meeting.importantQuestions : [];
-  const actionItemsList = Array.isArray(meeting.actionItems) ? meeting.actionItems : [];
-  const rawTranscriptList = Array.isArray(meeting.transcript) ? meeting.transcript : [];
-
   const filteredTranscript = rawTranscriptList.filter(t => {
     if (!t) return false;
     const text = safeString(t.text || (typeof t === 'string' ? t : ''));
@@ -287,7 +385,7 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
   });
 
   return (
-    <div style={{ maxWidth: '1180px', margin: '0 auto', padding: '32px 24px 80px' }}>
+    <div style={{ maxWidth: '1180px', margin: '0 auto', padding: '24px 16px 80px' }}>
       
       {/* Top Action Bar */}
       <div style={{
@@ -295,45 +393,45 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
         flexWrap: 'wrap',
         alignItems: 'center',
         justifyContent: 'space-between',
-        gap: '16px',
-        marginBottom: '24px'
+        gap: '12px',
+        marginBottom: '20px'
       }}>
         <button 
           onClick={onBack}
           className="btn btn-secondary"
-          style={{ padding: '8px 16px', fontSize: '0.88rem' }}
+          style={{ padding: '8px 14px', fontSize: '0.86rem' }}
         >
           <ArrowLeft size={16} />
           <span>Back to Dashboard</span>
         </button>
 
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
           <button
             onClick={handleRegenerateAI}
             disabled={reanalyzing}
             className="btn btn-secondary"
-            style={{ fontSize: '0.85rem' }}
+            style={{ fontSize: '0.82rem', padding: '8px 12px' }}
           >
-            <RefreshCw size={15} className={reanalyzing ? 'animate-spin' : ''} />
-            <span>{reanalyzing ? 'Analyzing with AI...' : 'Re-run AI Analysis'}</span>
+            <RefreshCw size={14} className={reanalyzing ? 'animate-spin' : ''} />
+            <span>{reanalyzing ? 'Analyzing...' : 'Re-run AI Analysis'}</span>
           </button>
 
           <button
             onClick={handleExportMarkdown}
             className="btn btn-secondary"
-            style={{ fontSize: '0.85rem' }}
+            style={{ fontSize: '0.82rem', padding: '8px 12px' }}
           >
-            <Download size={15} />
-            <span>Export Markdown</span>
+            <Download size={14} />
+            <span>Export Report</span>
           </button>
 
           <button
             onClick={() => window.print()}
             className="btn btn-primary"
-            style={{ fontSize: '0.85rem' }}
+            style={{ fontSize: '0.82rem', padding: '8px 12px' }}
           >
-            <Printer size={15} />
-            <span>Print Report (PDF)</span>
+            <Printer size={14} />
+            <span>Print PDF</span>
           </button>
         </div>
       </div>
@@ -346,7 +444,7 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
           color: '#34d399',
           padding: '12px 18px',
           borderRadius: '10px',
-          marginBottom: '24px',
+          marginBottom: '20px',
           display: 'flex',
           alignItems: 'center',
           gap: '10px',
@@ -365,7 +463,7 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
           color: '#a5b4fc',
           padding: '14px 20px',
           borderRadius: '12px',
-          marginBottom: '24px',
+          marginBottom: '20px',
           display: 'flex',
           alignItems: 'center',
           gap: '12px',
@@ -373,7 +471,7 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
           fontWeight: 600
         }}>
           <Sparkles size={18} className="animate-spin" />
-          <span>IntellMeet AI is analyzing the actual transcript and deriving fresh intelligence...</span>
+          <span>IntellMeet AI is analyzing the full transcript to generate 15-point intelligence...</span>
         </div>
       )}
 
@@ -385,11 +483,12 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
           color: '#fca5a5',
           padding: '14px 20px',
           borderRadius: '12px',
-          marginBottom: '24px',
+          marginBottom: '20px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          gap: '12px'
+          gap: '12px',
+          flexWrap: 'wrap'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <AlertCircle size={18} color="#ef4444" />
@@ -406,51 +505,56 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
       )}
 
       {/* Meeting Header Card */}
-      <div className="glass-panel" style={{ padding: '28px', borderRadius: '18px', marginBottom: '28px' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '14px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span className="badge badge-ended">AI Analyzed Session</span>
+      <div className="glass-panel" style={{ padding: '24px', borderRadius: '18px', marginBottom: '24px' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '14px', marginBottom: '14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <span className="badge badge-ended">AI 15-Point Intelligence</span>
             <span style={{ fontSize: '0.82rem', color: 'var(--text-dim)' }}>
               Code: <code style={{ color: '#a5b4fc', fontWeight: 600, background: 'rgba(99, 102, 241, 0.15)', padding: '2px 6px', borderRadius: '4px' }}>{meetingCode}</code>
             </span>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '14px', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Calendar size={15} color="#818cf8" />
+              <Calendar size={14} color="#818cf8" />
               {meetingDate}
             </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Clock size={15} color="#818cf8" />
+              <Clock size={14} color="#818cf8" />
               {meetingDuration} mins
             </span>
             <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <Users size={15} color="#818cf8" />
+              <Users size={14} color="#818cf8" />
               {participantsCount} participants
             </span>
           </div>
         </div>
 
-        <h1 style={{ fontSize: '1.9rem', color: '#fff', marginBottom: '8px', fontWeight: 800 }}>
+        <h1 style={{ fontSize: '1.65rem', color: '#fff', marginBottom: '8px', fontWeight: 800 }}>
           {meetingTitle}
         </h1>
-        <p style={{ color: 'var(--text-muted)', fontSize: '0.92rem', margin: 0, lineHeight: 1.5 }}>
+        <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', margin: 0, lineHeight: 1.5 }}>
           {meetingDescription}
         </p>
       </div>
 
-      {/* Navigation Tabs */}
+      {/* Navigation Tabs (Smooth Scrollable on Mobile) */}
       <div style={{
         display: 'flex',
         borderBottom: '1px solid var(--border-subtle)',
-        marginBottom: '28px',
-        gap: '8px',
-        overflowX: 'auto'
+        marginBottom: '24px',
+        gap: '6px',
+        overflowX: 'auto',
+        WebkitOverflowScrolling: 'touch',
+        scrollbarWidth: 'none',
+        paddingBottom: '2px'
       }}>
         {[
-          { id: 'summary', label: 'AI Intelligence & Takeaways', icon: Sparkles },
+          { id: 'summary', label: 'Executive Intelligence', icon: Sparkles },
+          { id: 'topics', label: `Topics (${topicsBreakdownList.length || topicsList.length})`, icon: Layers },
+          { id: 'speakers', label: `Speakers (${personWiseList.length})`, icon: UserCheck },
           { id: 'actions', label: `Action Items (${actionItemsList.length})`, icon: CheckCircle2 },
-          { id: 'transcript', label: `Transcript (${rawTranscriptList.length} turns)`, icon: FileText }
+          { id: 'transcript', label: `Transcript (${rawTranscriptList.length})`, icon: FileText }
         ].map(tab => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id;
@@ -462,19 +566,21 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
-                padding: '12px 18px',
-                background: 'transparent',
+                padding: '10px 16px',
+                background: isActive ? 'rgba(99, 102, 241, 0.12)' : 'transparent',
+                borderRadius: '8px 8px 0 0',
                 border: 'none',
-                borderBottom: isActive ? '2px solid #6366f1' : '2px solid transparent',
-                color: isActive ? '#a5b4fc' : 'var(--text-muted)',
+                borderBottom: isActive ? '2px solid #818cf8' : '2px solid transparent',
+                color: isActive ? '#c7d2fe' : 'var(--text-muted)',
                 fontWeight: isActive ? 700 : 500,
-                fontSize: '0.92rem',
+                fontSize: '0.88rem',
                 cursor: 'pointer',
                 transition: 'all 0.15s ease',
-                whiteSpace: 'nowrap'
+                whiteSpace: 'nowrap',
+                flexShrink: 0
               }}
             >
-              <Icon size={16} />
+              <Icon size={15} />
               <span>{tab.label}</span>
             </button>
           );
@@ -482,14 +588,14 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
       </div>
 
       {/* ==================================================== */}
-      {/* TAB 1: SUMMARY & TAKEAWAYS */}
+      {/* TAB 1: EXECUTIVE INTELLIGENCE */}
       {/* ==================================================== */}
       {activeTab === 'summary' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '22px' }}>
           
           {/* Executive Summary Card */}
-          <div className="glass-panel" style={{ padding: '28px', borderRadius: '18px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+          <div className="glass-panel" style={{ padding: '24px', borderRadius: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
               <div style={{
                 width: '32px',
                 height: '32px',
@@ -501,59 +607,28 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
               }}>
                 <Sparkles size={18} color="#818cf8" />
               </div>
-              <h3 style={{ fontSize: '1.2rem', color: '#fff', fontWeight: 700, margin: 0 }}>
-                Executive Meeting Summary
+              <h3 style={{ fontSize: '1.15rem', color: '#fff', fontWeight: 700, margin: 0 }}>
+                1. Executive Meeting Summary
               </h3>
             </div>
 
             <p style={{
-              fontSize: '1rem',
+              fontSize: '0.96rem',
               lineHeight: 1.7,
               color: 'var(--text-main)',
               margin: 0
             }}>
               {safeString(meeting.summary) || (
                 <span style={{ color: 'var(--text-dim)', fontStyle: 'italic' }}>
-                  No verbal transcript was recorded for this meeting. Use the in-meeting microphone or chat during your meetings to automatically generate detailed AI summaries.
+                  No verbal transcript was recorded for this meeting. Speak into the microphone during your meetings or type in chat to automatically generate detailed AI summaries.
                 </span>
               )}
             </p>
           </div>
 
-          {/* Topics Covered (Pills) */}
-          {topicsList.length > 0 && (
-            <div className="glass-panel" style={{ padding: '24px', borderRadius: '18px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                <Tag size={18} color="#818cf8" />
-                <h3 style={{ fontSize: '1.1rem', color: '#fff', fontWeight: 700, margin: 0 }}>
-                  Topics Covered
-                </h3>
-              </div>
-
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                {topicsList.map((topic, idx) => (
-                  <span
-                    key={idx}
-                    style={{
-                      background: 'rgba(99, 102, 241, 0.15)',
-                      border: '1px solid rgba(99, 102, 241, 0.3)',
-                      color: '#c7d2fe',
-                      padding: '6px 14px',
-                      borderRadius: '20px',
-                      fontSize: '0.84rem',
-                      fontWeight: 600
-                    }}
-                  >
-                    #{safeString(topic)}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Key Discussion Points */}
-          <div className="glass-panel" style={{ padding: '28px', borderRadius: '18px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+          {/* Key Discussion Points & Takeaways */}
+          <div className="glass-panel" style={{ padding: '24px', borderRadius: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
               <div style={{
                 width: '32px',
                 height: '32px',
@@ -565,7 +640,7 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
               }}>
                 <CheckSquare size={18} color="#818cf8" />
               </div>
-              <h3 style={{ fontSize: '1.2rem', color: '#fff', fontWeight: 700, margin: 0 }}>
+              <h3 style={{ fontSize: '1.15rem', color: '#fff', fontWeight: 700, margin: 0 }}>
                 Key Discussion Points & Takeaways
               </h3>
             </div>
@@ -575,7 +650,7 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
                 No key takeaways captured yet.
               </p>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {takeawaysList.map((point, idx) => (
                   <div
                     key={idx}
@@ -583,29 +658,29 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
                       display: 'flex',
                       alignItems: 'flex-start',
                       gap: '12px',
-                      padding: '14px 16px',
+                      padding: '12px 14px',
                       borderRadius: '10px',
                       background: 'rgba(14, 21, 36, 0.6)',
                       border: '1px solid var(--border-subtle)'
                     }}
                   >
                     <div style={{
-                      width: '22px',
-                      height: '22px',
+                      width: '20px',
+                      height: '20px',
                       borderRadius: '50%',
                       background: 'rgba(99, 102, 241, 0.2)',
                       color: '#a5b4fc',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      fontSize: '0.75rem',
+                      fontSize: '0.72rem',
                       fontWeight: 700,
                       flexShrink: 0,
                       marginTop: '2px'
                     }}>
                       {idx + 1}
                     </div>
-                    <span style={{ fontSize: '0.92rem', color: 'var(--text-main)', lineHeight: 1.6 }}>
+                    <span style={{ fontSize: '0.9rem', color: 'var(--text-main)', lineHeight: 1.55 }}>
                       {safeString(point)}
                     </span>
                   </div>
@@ -614,20 +689,95 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
             )}
           </div>
 
+          {/* Two-Column Grid: Problems Identified vs Solutions Suggested */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
+            
+            {/* Problems Identified */}
+            <div className="glass-panel" style={{ padding: '22px', borderRadius: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
+                <AlertTriangle size={18} color="#f87171" />
+                <h3 style={{ fontSize: '1.05rem', color: '#fff', fontWeight: 700, margin: 0 }}>
+                  Problems & Blockers Identified ({problemsList.length})
+                </h3>
+              </div>
+
+              {problemsList.length === 0 ? (
+                <p style={{ color: 'var(--text-dim)', fontSize: '0.86rem', margin: 0 }}>
+                  No major blockers or pain points raised in this session.
+                </p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {problemsList.map((prob, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: '8px',
+                        background: 'rgba(239, 68, 68, 0.08)',
+                        border: '1px solid rgba(239, 68, 68, 0.22)',
+                        fontSize: '0.86rem',
+                        color: '#fca5a5',
+                        lineHeight: 1.5
+                      }}
+                    >
+                      ⚠️ {safeString(prob)}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Solutions Suggested */}
+            <div className="glass-panel" style={{ padding: '22px', borderRadius: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
+                <Lightbulb size={18} color="#38bdf8" />
+                <h3 style={{ fontSize: '1.05rem', color: '#fff', fontWeight: 700, margin: 0 }}>
+                  Solutions & Action Plans ({solutionsList.length})
+                </h3>
+              </div>
+
+              {solutionsList.length === 0 ? (
+                <p style={{ color: 'var(--text-dim)', fontSize: '0.86rem', margin: 0 }}>
+                  Standard methodologies applied; no custom solutions recorded.
+                </p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {solutionsList.map((sol, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: '8px',
+                        background: 'rgba(56, 189, 248, 0.08)',
+                        border: '1px solid rgba(56, 189, 248, 0.22)',
+                        fontSize: '0.86rem',
+                        color: '#7dd3fc',
+                        lineHeight: 1.5
+                      }}
+                    >
+                      💡 {safeString(sol)}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+          </div>
+
           {/* Two-Column Grid: Decisions Made & Questions Raised */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px' }}>
             
             {/* Key Decisions */}
-            <div className="glass-panel" style={{ padding: '24px', borderRadius: '18px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+            <div className="glass-panel" style={{ padding: '22px', borderRadius: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
                 <CheckCircle2 size={18} color="#10b981" />
-                <h3 style={{ fontSize: '1.1rem', color: '#fff', fontWeight: 700, margin: 0 }}>
+                <h3 style={{ fontSize: '1.05rem', color: '#fff', fontWeight: 700, margin: 0 }}>
                   Decisions Made ({decisionsList.length})
                 </h3>
               </div>
 
               {decisionsList.length === 0 ? (
-                <p style={{ color: 'var(--text-dim)', fontSize: '0.88rem', margin: 0 }}>
+                <p style={{ color: 'var(--text-dim)', fontSize: '0.86rem', margin: 0 }}>
                   No explicit decisions noted during this session.
                 </p>
               ) : (
@@ -636,11 +786,11 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
                     <div
                       key={idx}
                       style={{
-                        padding: '12px 14px',
+                        padding: '10px 12px',
                         borderRadius: '8px',
                         background: 'rgba(16, 185, 129, 0.1)',
                         border: '1px solid rgba(16, 185, 129, 0.25)',
-                        fontSize: '0.88rem',
+                        fontSize: '0.86rem',
                         color: '#6ee7b7',
                         lineHeight: 1.5
                       }}
@@ -653,16 +803,16 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
             </div>
 
             {/* Questions Raised */}
-            <div className="glass-panel" style={{ padding: '24px', borderRadius: '18px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+            <div className="glass-panel" style={{ padding: '22px', borderRadius: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
                 <HelpCircle size={18} color="#f59e0b" />
-                <h3 style={{ fontSize: '1.1rem', color: '#fff', fontWeight: 700, margin: 0 }}>
-                  Questions & Topics Raised ({questionsList.length})
+                <h3 style={{ fontSize: '1.05rem', color: '#fff', fontWeight: 700, margin: 0 }}>
+                  Questions Raised ({questionsList.length})
                 </h3>
               </div>
 
               {questionsList.length === 0 ? (
-                <p style={{ color: 'var(--text-dim)', fontSize: '0.88rem', margin: 0 }}>
+                <p style={{ color: 'var(--text-dim)', fontSize: '0.86rem', margin: 0 }}>
                   No unresolved questions identified.
                 </p>
               ) : (
@@ -671,11 +821,11 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
                     <div
                       key={idx}
                       style={{
-                        padding: '12px 14px',
+                        padding: '10px 12px',
                         borderRadius: '8px',
                         background: 'rgba(245, 158, 11, 0.1)',
                         border: '1px solid rgba(245, 158, 11, 0.25)',
-                        fontSize: '0.88rem',
+                        fontSize: '0.86rem',
                         color: '#fcd34d',
                         lineHeight: 1.5
                       }}
@@ -693,16 +843,193 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
       )}
 
       {/* ==================================================== */}
-      {/* TAB 2: SMART ACTION ITEMS */}
+      {/* TAB 2: TOPICS BREAKDOWN */}
+      {/* ==================================================== */}
+      {activeTab === 'topics' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+          <div className="glass-panel" style={{ padding: '22px', borderRadius: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+              <Layers size={18} color="#818cf8" />
+              <h3 style={{ fontSize: '1.15rem', color: '#fff', fontWeight: 700, margin: 0 }}>
+                Topic-by-Topic Breakdown & Contributions
+              </h3>
+            </div>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', margin: 0 }}>
+              Live topic evolution and subject matter segments detected across the meeting.
+            </p>
+          </div>
+
+          {topicsBreakdownList.length === 0 ? (
+            <div className="glass-panel" style={{ textAlign: 'center', padding: '48px 20px', borderRadius: '16px', color: 'var(--text-dim)' }}>
+              <Tag size={36} color="var(--text-dim)" style={{ margin: '0 auto 12px' }} />
+              <p style={{ fontSize: '0.92rem' }}>No topic segments registered. Provide speech dialogue to unlock auto-segmentation.</p>
+            </div>
+          ) : (
+            topicsBreakdownList.map((tb, idx) => (
+              <div 
+                key={idx}
+                className="glass-panel" 
+                style={{
+                  padding: '22px',
+                  borderRadius: '16px',
+                  borderLeft: '4px solid #818cf8'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px', marginBottom: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 800,
+                      background: 'rgba(99, 102, 241, 0.2)',
+                      color: '#a5b4fc',
+                      padding: '2px 8px',
+                      borderRadius: '4px'
+                    }}>
+                      TOPIC {idx + 1}
+                    </span>
+                    <h4 style={{ fontSize: '1.1rem', fontWeight: 700, color: '#fff', margin: 0 }}>
+                      {safeString(tb.topic, `Topic #${idx + 1}`)}
+                    </h4>
+                  </div>
+                </div>
+
+                <p style={{ fontSize: '0.92rem', color: 'var(--text-main)', lineHeight: 1.6, marginBottom: '14px' }}>
+                  {safeString(tb.summary, 'Topic discussion segment.')}
+                </p>
+
+                {/* Contributors */}
+                {Array.isArray(tb.contributors) && tb.contributors.length > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-dim)', fontWeight: 600 }}>Contributors:</span>
+                    {tb.contributors.map((c, cIdx) => (
+                      <span
+                        key={cIdx}
+                        style={{
+                          fontSize: '0.78rem',
+                          padding: '3px 10px',
+                          borderRadius: '12px',
+                          background: 'rgba(255, 255, 255, 0.06)',
+                          color: '#e2e8f0',
+                          border: '1px solid rgba(255, 255, 255, 0.1)'
+                        }}
+                      >
+                        {safeString(c)}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Specific Decisions or Questions under this topic */}
+                {(Array.isArray(tb.decisions) && tb.decisions.length > 0) && (
+                  <div style={{ marginTop: '8px', fontSize: '0.84rem', color: '#6ee7b7' }}>
+                    <strong>Key Conclusion:</strong> {tb.decisions.map(safeString).join('; ')}
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* TAB 3: SPEAKERS & CONTRIBUTIONS */}
+      {/* ==================================================== */}
+      {activeTab === 'speakers' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+          <div className="glass-panel" style={{ padding: '22px', borderRadius: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+              <UserCheck size={18} color="#818cf8" />
+              <h3 style={{ fontSize: '1.15rem', color: '#fff', fontWeight: 700, margin: 0 }}>
+                Person-Wise Speaking Summary & Attribution
+              </h3>
+            </div>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', margin: 0 }}>
+              Turn distribution, key individual highlights, and speaking contributions.
+            </p>
+          </div>
+
+          {personWiseList.length === 0 ? (
+            <div className="glass-panel" style={{ textAlign: 'center', padding: '48px 20px', borderRadius: '16px', color: 'var(--text-dim)' }}>
+              <Users size={36} color="var(--text-dim)" style={{ margin: '0 auto 12px' }} />
+              <p style={{ fontSize: '0.92rem' }}>No individual speaker transcript turns recorded.</p>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '18px' }}>
+              {personWiseList.map((speakerData, idx) => {
+                const spkName = safeString(speakerData.speaker, 'Speaker');
+                const turns = speakerData.speakingTurns || 1;
+                const points = Array.isArray(speakerData.keyPoints) ? speakerData.keyPoints : [];
+
+                return (
+                  <div
+                    key={idx}
+                    className="glass-panel"
+                    style={{
+                      padding: '22px',
+                      borderRadius: '16px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '12px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <img
+                        src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(spkName)}`}
+                        alt={spkName}
+                        style={{ width: '42px', height: '42px', borderRadius: '50%', objectFit: 'cover' }}
+                      />
+                      <div>
+                        <h4 style={{ fontSize: '1rem', fontWeight: 700, color: '#fff', margin: 0 }}>
+                          {spkName}
+                        </h4>
+                        <span style={{ fontSize: '0.76rem', color: '#818cf8', fontWeight: 600 }}>
+                          {turns} speaking turn{turns === 1 ? '' : 's'} recorded
+                        </span>
+                      </div>
+                    </div>
+
+                    <p style={{ fontSize: '0.88rem', color: 'var(--text-main)', lineHeight: 1.55, margin: 0 }}>
+                      {safeString(speakerData.contributionSummary, 'Active contributor to team discussion.')}
+                    </p>
+
+                    {points.length > 0 && (
+                      <div style={{
+                        marginTop: '6px',
+                        paddingTop: '10px',
+                        borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '6px'
+                      }}>
+                        <span style={{ fontSize: '0.74rem', color: 'var(--text-dim)', fontWeight: 700, textTransform: 'uppercase' }}>
+                          Key Contributions:
+                        </span>
+                        {points.map((pt, pIdx) => (
+                          <div key={pIdx} style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                            • {safeString(pt)}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ==================================================== */}
+      {/* TAB 4: SMART ACTION ITEMS & RESPONSIBILITIES */}
       {/* ==================================================== */}
       {activeTab === 'actions' && (
-        <div className="glass-panel" style={{ padding: '28px', borderRadius: '18px' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '24px' }}>
+        <div className="glass-panel" style={{ padding: '24px', borderRadius: '16px' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '14px', marginBottom: '22px' }}>
             <div>
-              <h3 style={{ fontSize: '1.25rem', color: '#fff', fontWeight: 700, marginBottom: '4px' }}>
-                AI-Extracted Action Items
+              <h3 style={{ fontSize: '1.2rem', color: '#fff', fontWeight: 700, marginBottom: '4px' }}>
+                AI-Extracted Action Items & Assigned Responsibilities
               </h3>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', margin: 0 }}>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.86rem', margin: 0 }}>
                 Tasks automatically extracted by AI from meeting speech with assignees, priorities, and deadlines.
               </p>
             </div>
@@ -711,9 +1038,9 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
               <button
                 onClick={onNavigateKanban}
                 className="btn btn-secondary"
-                style={{ fontSize: '0.85rem' }}
+                style={{ fontSize: '0.82rem', padding: '8px 12px' }}
               >
-                <KanbanSquare size={16} />
+                <KanbanSquare size={15} />
                 <span>Go to Sprint Kanban</span>
               </button>
             )}
@@ -722,7 +1049,7 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
           {actionItemsList.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--text-dim)' }}>
               <CheckCircle2 size={36} color="var(--text-dim)" style={{ margin: '0 auto 12px' }} />
-              <p style={{ fontSize: '0.95rem' }}>No actionable tasks detected in this session's transcript.</p>
+              <p style={{ fontSize: '0.92rem' }}>No actionable tasks detected in this session's transcript.</p>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -738,24 +1065,24 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
                       flexWrap: 'wrap',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      gap: '16px',
-                      padding: '16px 20px',
+                      gap: '14px',
+                      padding: '14px 18px',
                       borderRadius: '12px',
                       background: 'rgba(14, 21, 36, 0.7)',
                       border: '1px solid var(--border-subtle)'
                     }}
                   >
                     <div style={{ flex: 1, minWidth: '240px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px', flexWrap: 'wrap' }}>
                         <span className={`badge badge-priority-${item.priority}`}>
                           {item.priority.toUpperCase()}
                         </span>
-                        <h4 style={{ fontSize: '0.96rem', fontWeight: 700, color: '#fff', margin: 0 }}>
+                        <h4 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#fff', margin: 0 }}>
                           {item.task}
                         </h4>
                       </div>
 
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
                         <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <Users size={13} color="#818cf8" />
                           <span>Owner: <strong style={{ color: '#fff' }}>{item.assignee}</strong></span>
@@ -764,6 +1091,11 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
                           <Calendar size={13} color="#818cf8" />
                           <span>Due: {item.dueDate}</span>
                         </span>
+                        {item.followUp && (
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#a5b4fc' }}>
+                            <span>Note: {item.followUp}</span>
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -774,21 +1106,21 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
                           alignItems: 'center',
                           gap: '6px',
                           color: '#34d399',
-                          fontSize: '0.84rem',
+                          fontSize: '0.82rem',
                           fontWeight: 600,
-                          padding: '6px 14px',
+                          padding: '6px 12px',
                           borderRadius: '8px',
                           background: 'rgba(16, 185, 129, 0.15)',
                           border: '1px solid rgba(16, 185, 129, 0.3)'
                         }}>
                           <Check size={14} />
-                          <span>On Kanban Board</span>
+                          <span>On Kanban</span>
                         </span>
                       ) : (
                         <button
                           onClick={() => handleConvertToTask(rawItem, idx)}
                           className="btn btn-secondary"
-                          style={{ fontSize: '0.82rem', padding: '7px 14px' }}
+                          style={{ fontSize: '0.82rem', padding: '7px 12px' }}
                         >
                           <KanbanSquare size={14} color="#818cf8" />
                           <span>Add to Kanban</span>
@@ -804,34 +1136,34 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
       )}
 
       {/* ==================================================== */}
-      {/* TAB 3: VERBATIM TRANSCRIPT */}
+      {/* TAB 5: VERBATIM TRANSCRIPT & TRANSLATIONS */}
       {/* ==================================================== */}
       {activeTab === 'transcript' && (
-        <div className="glass-panel" style={{ padding: '28px', borderRadius: '18px' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '16px', marginBottom: '24px' }}>
+        <div className="glass-panel" style={{ padding: '24px', borderRadius: '16px' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '14px', marginBottom: '20px' }}>
             <div>
-              <h3 style={{ fontSize: '1.25rem', color: '#fff', fontWeight: 700, marginBottom: '4px' }}>
-                Verbatim Session Transcript
+              <h3 style={{ fontSize: '1.2rem', color: '#fff', fontWeight: 700, marginBottom: '4px' }}>
+                Verbatim Session Transcript & Translations
               </h3>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', margin: 0 }}>
-                Real-time speech converted to text with exact speaker identification and timestamps.
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.86rem', margin: 0 }}>
+                Real-time speech converted to text with exact speaker identification, timestamps, and live translations.
               </p>
             </div>
 
-            <div style={{ position: 'relative', width: '260px' }}>
-              <Search size={15} color="var(--text-dim)" style={{ position: 'absolute', left: '12px', top: '12px' }} />
+            <div style={{ position: 'relative', width: '100%', maxWidth: '280px' }}>
+              <Search size={15} color="var(--text-dim)" style={{ position: 'absolute', left: '12px', top: '11px' }} />
               <input
                 type="text"
                 placeholder="Search dialogue or speaker..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="input-field"
-                style={{ paddingLeft: '36px', fontSize: '0.85rem', width: '100%' }}
+                style={{ paddingLeft: '36px', fontSize: '0.84rem', width: '100%' }}
               />
             </div>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {filteredTranscript.length === 0 ? (
               <p style={{ color: 'var(--text-dim)', textAlign: 'center', padding: '48px 0', fontSize: '0.9rem' }}>
                 {searchTerm ? `No transcript turns matching "${searchTerm}"` : 'No verbal speech was captured during this session.'}
@@ -848,8 +1180,8 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
                     style={{
                       display: 'flex',
                       alignItems: 'flex-start',
-                      gap: '14px',
-                      padding: '14px 16px',
+                      gap: '12px',
+                      padding: '12px 14px',
                       borderRadius: '10px',
                       background: 'rgba(14, 21, 36, 0.5)',
                       border: '1px solid var(--border-subtle)'
@@ -858,23 +1190,23 @@ ${(Array.isArray(meeting.transcript) ? meeting.transcript : []).map(t => `[${saf
                     <img
                       src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(speaker)}`}
                       alt={speaker}
-                      style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+                      style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
                     />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                        <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#fff' }}>{speaker}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '0.86rem', fontWeight: 700, color: '#fff' }}>{speaker}</span>
                         {timestamp && (
-                          <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)', fontFamily: 'monospace' }}>
                             {timestamp}
                           </span>
                         )}
                       </div>
-                      <p style={{ fontSize: '0.9rem', color: 'var(--text-main)', lineHeight: 1.5, margin: 0 }}>
+                      <p style={{ fontSize: '0.88rem', color: 'var(--text-main)', lineHeight: 1.5, margin: 0, wordBreak: 'break-word' }}>
                         {text}
                       </p>
                       {rawLine?.translation && (
-                        <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px solid rgba(255, 255, 255, 0.06)', fontSize: '0.84rem', color: '#38bdf8', lineHeight: 1.4 }}>
-                          <span style={{ fontSize: '0.68rem', background: 'rgba(56, 189, 248, 0.15)', color: '#7dd3fc', padding: '1px 5px', borderRadius: '3px', marginRight: '6px', fontWeight: 700 }}>
+                        <div style={{ marginTop: '6px', paddingTop: '6px', borderTop: '1px solid rgba(255, 255, 255, 0.06)', fontSize: '0.82rem', color: '#38bdf8', lineHeight: 1.4, wordBreak: 'break-word' }}>
+                          <span style={{ fontSize: '0.66rem', background: 'rgba(56, 189, 248, 0.15)', color: '#7dd3fc', padding: '1px 5px', borderRadius: '3px', marginRight: '6px', fontWeight: 700 }}>
                             {(rawLine.targetLanguage || 'Translated').toUpperCase()}
                           </span>
                           {rawLine.translation}

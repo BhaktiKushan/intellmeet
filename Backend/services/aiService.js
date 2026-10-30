@@ -118,36 +118,35 @@ ${transcriptText}
 Instructions:
 - Base all insights strictly on what was actually discussed or spoken by participants.
 - Do not invent fictitious deliverables or generic placeholder text.
-- Include key discussion points, topics covered, decisions made, important questions, and action items.
+- Generate a comprehensive, 15-point structured intelligence breakdown.
 
 Produce a JSON object with:
 1. "summary": A professional, 2-4 sentence executive summary describing what was reviewed, resolved, or discussed.
 2. "topicsCovered": Array of 2-5 specific topics covered during the meeting.
-3. "keyTakeaways": Array of 3-6 bullet points summarizing the actual discussion points and key findings.
-4. "keyDecisions": Array of 1-4 specific decisions made or consensus reached. If none explicit, note what was agreed or scheduled.
-5. "importantQuestions": Array of notable questions, technical challenges, or issues raised by participants.
-6. "actionItems": Array of actionable tasks extracted directly from the conversation. Each item should have:
+3. "topicsBreakdown": Array of topics discussed. Each item should have:
+   - "topic": Topic name
+   - "summary": Description of what was discussed under this topic
+   - "contributors": Array of objects: [{"speaker": "Name", "point": "What they explained or argued"}]
+   - "decisions": Array of specific decisions or consensus regarding this topic
+   - "questions": Array of questions raised regarding this topic
+4. "personWiseSummary": Array of participants. Each item should have:
+   - "speaker": Participant name
+   - "speakingTurns": Estimated number of turns or contribution weight
+   - "contributionSummary": A 1-2 sentence description of their main role and perspective in this meeting
+   - "keyPoints": Array of their 2-4 primary points or statements
+5. "problemsIdentified": Array of technical or operational problems/issues identified by participants during the meeting.
+6. "solutionsSuggested": Array of concrete solutions, fixes, or optimizations suggested by participants.
+7. "keyTakeaways": Array of 3-6 bullet points summarizing the actual discussion points and key findings.
+8. "keyDecisions": Array of 1-4 specific decisions made or consensus reached. If none explicit, note what was agreed or scheduled.
+9. "importantQuestions": Array of notable questions, technical challenges, or issues raised by participants.
+10. "actionItems": Array of actionable tasks extracted directly from the conversation. Each item should have:
    - "task": specific task description
    - "assignee": name of the assigned participant (or plausible team member name from transcript)
    - "priority": "urgent" | "high" | "medium" | "low"
    - "dueDate": realistic completion date string
+   - "followUp": specific verification or follow-up note
 
-Respond ONLY with a valid JSON object matching this schema:
-{
-  "summary": "string",
-  "topicsCovered": ["string"],
-  "keyTakeaways": ["string"],
-  "keyDecisions": ["string"],
-  "importantQuestions": ["string"],
-  "actionItems": [
-    {
-      "task": "string",
-      "assignee": "string",
-      "priority": "high",
-      "dueDate": "2026-11-05"
-    }
-  ]
-}`;
+Respond ONLY with a valid JSON object matching this schema.`;
 
     for (const model of candidateModels) {
       try {
@@ -215,6 +214,10 @@ Respond ONLY with a valid JSON object matching this schema:
             return {
               summary: parsed.summary || `Executive alignment concluded for ${meetingTitle}.`,
               topicsCovered: Array.isArray(parsed.topicsCovered) ? parsed.topicsCovered : [],
+              topicsBreakdown: Array.isArray(parsed.topicsBreakdown) ? parsed.topicsBreakdown : [],
+              personWiseSummary: Array.isArray(parsed.personWiseSummary) ? parsed.personWiseSummary : [],
+              problemsIdentified: Array.isArray(parsed.problemsIdentified) ? parsed.problemsIdentified : [],
+              solutionsSuggested: Array.isArray(parsed.solutionsSuggested) ? parsed.solutionsSuggested : [],
               keyTakeaways: Array.isArray(parsed.keyTakeaways) ? parsed.keyTakeaways : [],
               keyDecisions: Array.isArray(parsed.keyDecisions) ? parsed.keyDecisions : [],
               importantQuestions: Array.isArray(parsed.importantQuestions) ? parsed.importantQuestions : [],
@@ -357,16 +360,177 @@ Respond ONLY with a valid JSON object matching this schema:
     keyTakeaways.push(`Conducted cross-functional discussion on ${meetingTitle}.`);
   }
 
+  // Person-Wise Speaking Breakdown & Key Points
+  const speakerTurnsMap = {};
+  const speakerPointsMap = {};
+  transcriptList.forEach((t) => {
+    const spk = t.speaker || 'Team Member';
+    speakerTurnsMap[spk] = (speakerTurnsMap[spk] || 0) + 1;
+    if (!speakerPointsMap[spk]) speakerPointsMap[spk] = [];
+    if (t.text && t.text.length > 15 && speakerPointsMap[spk].length < 4) {
+      speakerPointsMap[spk].push(t.text);
+    }
+  });
+
+  const personWiseSummary = Object.keys(speakerTurnsMap).map((spk) => ({
+    speaker: spk,
+    speakingTurns: speakerTurnsMap[spk],
+    contributionSummary: `${spk} contributed actively to discussion points, addressing key deliverables and shared milestones.`,
+    keyPoints: speakerPointsMap[spk].length > 0 ? speakerPointsMap[spk] : [`Shared perspectives during the meeting session.`]
+  }));
+
+  // Problems Identified & Solutions Suggested heuristics
+  const problemKeywords = ['problem', 'issue', 'bug', 'broken', 'error', 'failing', 'stuck', 'delay', 'latency', 'interruptions', 'drop', 'cut off'];
+  const solutionKeywords = ['solution', 'fix', 'suggest', 'recommend', 'improve', 'resolved', 'implement', 'deploy', 'update', 'upgrade', 'optimize'];
+
+  const problemsIdentified = [];
+  const solutionsSuggested = [];
+
+  transcriptList.forEach((t) => {
+    const textLower = (t.text || '').toLowerCase();
+    if (problemKeywords.some(pk => textLower.includes(pk)) && problemsIdentified.length < 5) {
+      problemsIdentified.push(`${t.speaker}: "${t.text.trim()}"`);
+    }
+    if (solutionKeywords.some(sk => textLower.includes(sk)) && solutionsSuggested.length < 5) {
+      solutionsSuggested.push(`${t.speaker}: "${t.text.trim()}"`);
+    }
+  });
+
+  // Topics Breakdown with per-speaker contributions
+  const topicsBreakdown = topicsCovered.map((topicName) => {
+    const topicLower = topicName.toLowerCase();
+    const relatedTurns = transcriptList.filter(t => (t.text || '').toLowerCase().includes(topicLower));
+    const contributors = (relatedTurns.length > 0 ? relatedTurns : transcriptList.slice(0, 3)).slice(0, 4).map(t => ({
+      speaker: t.speaker || 'Participant',
+      point: t.text || 'Discussed topic objectives'
+    }));
+
+    return {
+      topic: topicName,
+      summary: `In-depth exploration and review of ${topicName} with alignment across team members.`,
+      contributors,
+      decisions: keyDecisions.slice(0, 2),
+      questions: importantQuestions.slice(0, 2)
+    };
+  });
+
   const speakerSummary = speakers.length > 0 ? `with active participation from ${speakers.join(', ')}` : '';
   const summary = `During this session for "${meetingTitle}" ${speakerSummary}, the team discussed key milestones and aligned on deliverables based on the live meeting dialogue.`;
 
   return {
     summary,
     topicsCovered,
+    topicsBreakdown,
+    personWiseSummary,
+    problemsIdentified,
+    solutionsSuggested,
     keyTakeaways,
     keyDecisions: keyDecisions.length > 0 ? keyDecisions : [`Team reached consensus on the core discussion points.`],
     importantQuestions,
     actionItems
+  };
+};
+
+/**
+ * Real-Time Live Topic Detection
+ * Analyzes the most recent meeting dialogue turns to determine active topic,
+ * key points, participant contributions, and decisions suggested.
+ */
+export const detectLiveTopic = async (recentTurns = [], meetingTitle = 'Team Meeting') => {
+  if (!Array.isArray(recentTurns) || recentTurns.length === 0) {
+    return {
+      topic: 'General Meeting Discussion',
+      summary: 'Participants are collaborating on agenda items.',
+      contributors: [],
+      questions: [],
+      decisions: []
+    };
+  }
+
+  const turnsText = recentTurns
+    .slice(-8)
+    .map(t => `${t.speaker || 'Participant'}: ${t.text || ''}`)
+    .join('\n');
+
+  const geminiKey = process.env.GEMINI_API_KEY?.trim();
+  if (geminiKey && geminiKey.length > 10) {
+    try {
+      const prompt = `You are a real-time meeting intelligence engine.
+Analyze these recent live meeting turns:
+"""
+${turnsText}
+"""
+
+Identify the CURRENT discussion topic and participants' points.
+Return ONLY valid JSON matching:
+{
+  "topic": "Concise Topic Name (3-6 words)",
+  "summary": "1 sentence describing current topic",
+  "contributors": [
+    { "speaker": "Name", "point": "Key point or suggestion made" }
+  ],
+  "questions": ["Notable question asked if any"],
+  "decisions": ["Suggested or agreed decision if any"]
+}`;
+
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${geminiKey}`;
+      const res = await fetch(geminiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(3500),
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.1,
+            responseMimeType: 'application/json'
+          }
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        const parsed = extractJson(candidateText);
+        if (parsed && parsed.topic) {
+          return {
+            topic: parsed.topic,
+            summary: parsed.summary || 'Team discussion in progress.',
+            contributors: Array.isArray(parsed.contributors) ? parsed.contributors : [],
+            questions: Array.isArray(parsed.questions) ? parsed.questions : [],
+            decisions: Array.isArray(parsed.decisions) ? parsed.decisions : []
+          };
+        }
+      }
+    } catch (e) {
+      // Fallback quickly
+    }
+  }
+
+  // Fast heuristic extraction
+  const speakers = [...new Set(recentTurns.map(t => t.speaker).filter(Boolean))];
+  const lastTurn = recentTurns[recentTurns.length - 1] || {};
+  const words = (recentTurns.map(t => t.text).join(' ')).toLowerCase().replace(/[^a-zA-Z0-9\s]/g, ' ').split(/\s+/);
+  const stopWords = new Set(['the','and','to','a','of','in','i','you','that','it','is','was','for','on','with','as','at','this','be','we','have','do','not','are','my','we']);
+  const wordCounts = {};
+  words.forEach(w => {
+    if (w.length > 4 && !stopWords.has(w)) {
+      wordCounts[w] = (wordCounts[w] || 0) + 1;
+    }
+  });
+  const topKeywords = Object.entries(wordCounts).sort((a,b) => b[1] - a[1]).slice(0, 2).map(([w]) => w.charAt(0).toUpperCase() + w.slice(1));
+  const topicName = topKeywords.length > 0 ? `${topKeywords.join(' & ')} Alignment` : 'Active Sprint Discussion';
+
+  const contributors = recentTurns.slice(-4).map(t => ({
+    speaker: t.speaker || 'Speaker',
+    point: (t.text || '').slice(0, 100)
+  }));
+
+  return {
+    topic: topicName,
+    summary: `Active discussion with contributions from ${speakers.join(', ') || 'team members'}.`,
+    contributors,
+    questions: recentTurns.filter(t => (t.text || '').endsWith('?')).map(t => `${t.speaker}: "${t.text}"`).slice(0, 2),
+    decisions: []
   };
 };
 

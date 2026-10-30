@@ -213,7 +213,7 @@ export const MeetingsPage = ({
         gap: '16px'
       }}>
         {/* Filter Tabs */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', maxWidth: '100%', overflowX: 'auto' }}>
           {[
             { id: 'all', label: `All Meetings (${meetings.length})` },
             { id: 'ended', label: `Completed (${countEnded})` },
@@ -232,7 +232,8 @@ export const MeetingsPage = ({
                 fontWeight: statusFilter === tab.id ? 700 : 500,
                 fontSize: '0.85rem',
                 cursor: 'pointer',
-                transition: 'all 0.15s ease'
+                transition: 'all 0.15s ease',
+                whiteSpace: 'nowrap'
               }}
             >
               {tab.label}
@@ -241,7 +242,7 @@ export const MeetingsPage = ({
         </div>
 
         {/* Search Input */}
-        <div style={{ position: 'relative', minWidth: '280px', flex: '1', maxWidth: '400px' }}>
+        <div style={{ position: 'relative', minWidth: 'min(100%, 240px)', flex: '1', maxWidth: '400px' }}>
           <Search size={16} color="var(--text-dim)" style={{ position: 'absolute', left: '12px', top: '12px' }} />
           <input
             type="text"

@@ -87,12 +87,7 @@ export const AnalyticsPage = ({ onBack, onNavigateTab }) => {
       </div>
 
       {/* KPI Cards Grid */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-        gap: '20px',
-        marginBottom: '36px'
-      }}>
+      <div className="analytics-kpi-grid">
         {[
           {
             label: 'Follow-Up Overhead Reduced',
@@ -148,12 +143,7 @@ export const AnalyticsPage = ({ onBack, onNavigateTab }) => {
       </div>
 
       {/* Main Charts & Breakdown Section */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(440px, 1fr))',
-        gap: '24px',
-        marginBottom: '36px'
-      }}>
+      <div className="analytics-charts-grid">
         
         {/* Weekly Trend Bar Chart */}
         <div className="glass-panel" style={{ padding: '28px', borderRadius: '18px' }}>

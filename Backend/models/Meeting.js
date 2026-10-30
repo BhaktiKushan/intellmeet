@@ -189,6 +189,34 @@ const meetingSchema = new mongoose.Schema(
     topicsCovered: [{
       type: String
     }],
+    topicsBreakdown: [{
+      topic: { type: String, required: true },
+      summary: { type: String, default: '' },
+      contributors: [{
+        speaker: { type: String },
+        point: { type: String }
+      }],
+      decisions: [{ type: String }],
+      questions: [{ type: String }]
+    }],
+    personWiseSummary: [{
+      speaker: { type: String, required: true },
+      speakingTurns: { type: Number, default: 0 },
+      contributionSummary: { type: String, default: '' },
+      keyPoints: [{ type: String }]
+    }],
+    problemsIdentified: [{
+      type: String
+    }],
+    solutionsSuggested: [{
+      type: String
+    }],
+    liveTopicTimeline: [{
+      topic: { type: String, required: true },
+      detectedAt: { type: Date, default: Date.now },
+      keyPoints: [{ type: String }],
+      activeSpeaker: { type: String }
+    }],
     keyTakeaways: [{
       type: String
     }],

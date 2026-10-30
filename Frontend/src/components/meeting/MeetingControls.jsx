@@ -20,7 +20,8 @@ import {
   Copy,
   ShieldCheck,
   MoreVertical,
-  Globe
+  Globe,
+  Maximize2
 } from 'lucide-react';
 
 export const MeetingControls = ({
@@ -701,6 +702,52 @@ export const MeetingControls = ({
                 <span style={{ fontSize: '0.86rem' }}>
                   Participants ({participantCount})
                 </span>
+              </button>
+
+              {/* Live AI Transcript & Translation */}
+              <button
+                onClick={() => {
+                  setShowMobileMore(false);
+                  onToggleTab('transcript');
+                }}
+                className={`btn ${activeTab === 'transcript' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{
+                  padding: '14px',
+                  justifyContent: 'flex-start',
+                  gap: '10px',
+                  borderRadius: '14px'
+                }}
+              >
+                <Globe size={18} color={activeTab === 'transcript' ? '#fff' : '#818cf8'} />
+                <span style={{ fontSize: '0.86rem' }}>Live Transcript</span>
+              </button>
+
+              {/* Fullscreen Toggle */}
+              <button
+                onClick={() => {
+                  setShowMobileMore(false);
+                  try {
+                    if (!document.fullscreenElement) {
+                      const req = document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen;
+                      if (req) req.call(document.documentElement);
+                    } else {
+                      const exit = document.exitFullscreen || document.webkitExitFullscreen;
+                      if (exit) exit.call(document);
+                    }
+                  } catch (e) {
+                    console.warn('Fullscreen request failed:', e);
+                  }
+                }}
+                className="btn btn-secondary"
+                style={{
+                  padding: '14px',
+                  justifyContent: 'flex-start',
+                  gap: '10px',
+                  borderRadius: '14px'
+                }}
+              >
+                <Maximize2 size={18} color="#38bdf8" />
+                <span style={{ fontSize: '0.86rem' }}>Fullscreen</span>
               </button>
 
               {/* Switch Layout */}

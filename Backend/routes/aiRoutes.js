@@ -1,8 +1,22 @@
 import express from 'express';
-import { generateMeetingSummary, translateText } from '../services/aiService.js';
+import { generateMeetingSummary, translateText, detectLiveTopic } from '../services/aiService.js';
 import { protect } from '../middleware/auth.js';
 
 const router = express.Router();
+
+// Real-time AI Live Topic Detection
+router.post('/detect-topic', protect, async (req, res, next) => {
+  try {
+    const { recentTurns, title } = req.body;
+    const topicData = await detectLiveTopic(recentTurns, title);
+    res.json({
+      success: true,
+      data: topicData
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // Real-time AI Speech Translation
 router.post('/translate', protect, async (req, res, next) => {
