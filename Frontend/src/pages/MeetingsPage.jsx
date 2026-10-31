@@ -40,6 +40,8 @@ export const MeetingsPage = ({
   const [newDesc, setNewDesc] = useState('');
   const [newDate, setNewDate] = useState('');
   const [newTime, setNewTime] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
 
   const loadMeetings = async () => {
     setLoading(true);
@@ -61,20 +63,26 @@ export const MeetingsPage = ({
 
   const handleCreateMeeting = async (e) => {
     e.preventDefault();
-    if (!newTitle.trim()) return;
+    if (isCreating) return;
+    const cleanTitle = newTitle.trim();
+    if (!cleanTitle) return;
+
+    setIsCreating(true);
+    setCreateError('');
 
     try {
-      const randomCode = `meet-${Math.random().toString(36).substring(2, 6)}-${Math.random().toString(36).substring(2, 6)}`;
       const scheduledAt = newDate && newTime
         ? new Date(`${newDate}T${newTime}`)
         : new Date();
 
+      const clientSubmissionId = (newDate ? 'sched-' : 'inst-') + Date.now() + '-' + Math.random().toString(36).substring(2, 9);
+
       const res = await api.createMeeting({
-        title: newTitle.trim(),
+        title: cleanTitle,
         description: newDesc.trim() || 'Meeting session created in Meeting Hub.',
-        code: randomCode,
         status: newDate ? 'scheduled' : 'live',
-        scheduledAt
+        scheduledAt,
+        clientSubmissionId
       });
 
       setShowCreateModal(false);
@@ -85,12 +93,15 @@ export const MeetingsPage = ({
 
       if (!newDate) {
         // If instant, join immediately
-        onJoinMeeting(res.data?.code || randomCode);
+        onJoinMeeting(res.data?.code);
       } else {
-        loadMeetings();
+        await loadMeetings();
       }
     } catch (err) {
-      alert('Failed to create meeting: ' + err.message);
+      console.error('Failed to create meeting:', err);
+      setCreateError(err.message || 'Failed to create meeting.');
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -593,6 +604,20 @@ export const MeetingsPage = ({
               Configure meeting details, AI speech transcription, and schedule time.
             </p>
 
+            {createError && (
+              <div style={{
+                padding: '10px 14px',
+                borderRadius: '8px',
+                background: 'rgba(239, 68, 68, 0.15)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                color: '#fca5a5',
+                fontSize: '0.82rem',
+                marginBottom: '16px'
+              }}>
+                {createError}
+              </div>
+            )}
+
             <form onSubmit={handleCreateMeeting} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>
@@ -601,6 +626,7 @@ export const MeetingsPage = ({
                 <input
                   type="text"
                   required
+                  disabled={isCreating}
                   placeholder="e.g. Weekly Engineering Sync"
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
@@ -615,6 +641,7 @@ export const MeetingsPage = ({
                   </label>
                   <input
                     type="date"
+                    disabled={isCreating}
                     value={newDate}
                     onChange={(e) => setNewDate(e.target.value)}
                     className="input-field"
@@ -626,6 +653,7 @@ export const MeetingsPage = ({
                   </label>
                   <input
                     type="time"
+                    disabled={isCreating}
                     value={newTime}
                     onChange={(e) => setNewTime(e.target.value)}
                     className="input-field"
@@ -639,6 +667,7 @@ export const MeetingsPage = ({
                 </label>
                 <textarea
                   rows={3}
+                  disabled={isCreating}
                   placeholder="Key topics and goals for this session..."
                   value={newDesc}
                   onChange={(e) => setNewDesc(e.target.value)}
@@ -650,13 +679,43 @@ export const MeetingsPage = ({
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
                 <button
                   type="button"
-                  onClick={() => setShowCreateModal(false)}
+                  disabled={isCreating}
+                  onClick={() => {
+                    setShowCreateModal(false);
+                    setCreateError('');
+                  }}
                   className="btn btn-secondary"
                 >
                   Cancel
                 </button>
-                <button type="submit" className="btn btn-primary">
-                  {newDate ? 'Schedule Meeting' : 'Start Instant Call'}
+                <button 
+                  type="submit" 
+                  disabled={isCreating || !newTitle.trim()} 
+                  className="btn btn-primary"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    opacity: (isCreating || !newTitle.trim()) ? 0.7 : 1,
+                    cursor: (isCreating || !newTitle.trim()) ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  {isCreating ? (
+                    <>
+                      <span style={{
+                        display: 'inline-block',
+                        width: 14,
+                        height: 14,
+                        border: '2px solid rgba(255, 255, 255, 0.3)',
+                        borderTopColor: '#fff',
+                        borderRadius: '50%',
+                        animation: 'spin 0.8s linear infinite'
+                      }} />
+                      <span>{newDate ? 'Scheduling...' : 'Starting...'}</span>
+                    </>
+                  ) : (
+                    <span>{newDate ? 'Schedule Meeting' : 'Start Instant Call'}</span>
+                  )}
                 </button>
               </div>
             </form>

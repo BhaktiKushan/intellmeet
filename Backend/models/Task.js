@@ -56,4 +56,10 @@ const taskSchema = new mongoose.Schema(
   }
 );
 
+// High-performance compound indexes for Kanban & Dashboard filtering
+taskSchema.index({ status: 1, createdAt: -1 });
+taskSchema.index({ assignee: 1, createdAt: -1 });
+taskSchema.index({ creator: 1, createdAt: -1 });
+taskSchema.index({ meetingId: 1 });
+
 export default mongoose.model('Task', taskSchema);

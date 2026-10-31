@@ -6,6 +6,13 @@ import helmet from 'helmet';
 import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, '.env') });
+dotenv.config();
 import { connectDB } from './config/db.js';
 import { setupSocketIO } from './services/socketService.js';
 import { errorHandler } from './middleware/errorHandler.js';

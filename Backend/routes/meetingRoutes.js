@@ -14,6 +14,30 @@ const generateMeetingCode = () => {
   return `meet-${part(3)}-${part(4)}`;
 };
 
+// Generate a guaranteed collision-free meeting code
+const generateUniqueMeetingCode = async () => {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const candidate = generateMeetingCode();
+    const exists = await Meeting.findOne({ code: candidate }).select('_id').lean();
+    if (!exists) return candidate;
+  }
+  return `meet-${uuidv4().substring(0, 8)}`;
+};
+
+// Active in-flight creation lock and recent creations cache to prevent duplicate meetings
+const inFlightCreations = new Map();
+const recentCreations = new Map();
+
+// Periodic cleanup of recentCreations cache
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of recentCreations.entries()) {
+    if (now - entry.timestamp > 30000) {
+      recentCreations.delete(key);
+    }
+  }
+}, 60000).unref?.();
+
 // Get all meetings for user
 router.get('/', protect, async (req, res, next) => {
   try {
@@ -30,9 +54,11 @@ router.get('/', protect, async (req, res, next) => {
     }
 
     const meetings = await Meeting.find(query)
+      .select('-transcript -translatedTranscript -chatMessages -whiteboardData')
       .populate('host', 'name email avatar title department')
       .sort({ createdAt: -1 })
-      .limit(Number(limit));
+      .limit(Number(limit))
+      .lean();
 
     res.json({
       success: true,
@@ -44,38 +70,107 @@ router.get('/', protect, async (req, res, next) => {
   }
 });
 
-// Create a new meeting
+// Create a new meeting (Idempotent & Deduplicated)
 router.post('/', protect, async (req, res, next) => {
   try {
-    const { title, description, scheduledAt, settings } = req.body;
+    const { title, description, scheduledAt, settings, status, clientSubmissionId } = req.body;
 
-    const code = generateMeetingCode();
+    const cleanTitle = (title || 'Quick Enterprise Sync').trim();
+    const cleanDesc = (description || '').trim();
+    const scheduledDate = scheduledAt ? new Date(scheduledAt) : new Date();
+    const meetingStatus = status && ['scheduled', 'live', 'ended', 'active'].includes(status) ? status : 'scheduled';
+    const hostId = req.user._id.toString();
+    const subId = clientSubmissionId ? String(clientSubmissionId).trim() : null;
 
-    const meeting = await Meeting.create({
-      title: title || 'Quick Enterprise Sync',
-      description: description || '',
-      code,
-      host: req.user._id,
-      scheduledAt: scheduledAt ? new Date(scheduledAt) : new Date(),
-      status: 'scheduled',
-      settings: settings || {
-        muteOnJoin: false,
-        allowScreenShare: true,
-        aiTranscriptionEnabled: true
-      },
-      participants: [
-        {
-          user: req.user._id,
-          name: req.user.name,
-          email: req.user.email,
-          avatar: req.user.avatar,
-          role: 'host',
-          joinedAt: new Date()
-        }
-      ]
-    });
+    // 1. Build deduplication key
+    const dedupeKey = subId 
+      ? `sub:${hostId}:${subId}` 
+      : `title:${hostId}:${cleanTitle.toLowerCase()}:${Math.floor(scheduledDate.getTime() / 60000)}`;
 
-    const populated = await Meeting.findById(meeting._id).populate('host', 'name email avatar title');
+    // 2. Check in-memory recent creations cache (< 15 seconds)
+    if (recentCreations.has(dedupeKey)) {
+      const cached = recentCreations.get(dedupeKey);
+      if (Date.now() - cached.timestamp < 15000) {
+        return res.status(200).json({
+          success: true,
+          data: cached.data,
+          deduplicated: true
+        });
+      }
+    }
+
+    // 3. Concurrency Lock: If an identical request is actively in-flight, await its completion
+    if (inFlightCreations.has(dedupeKey)) {
+      const existingResult = await inFlightCreations.get(dedupeKey);
+      return res.status(200).json({
+        success: true,
+        data: existingResult,
+        deduplicated: true
+      });
+    }
+
+    // 4. Synchronously acquire lock BEFORE any async yield
+    const executeCreation = async () => {
+      // 4a. Check MongoDB for recently created duplicate
+      const mongoQuery = subId
+        ? { host: req.user._id, clientSubmissionId: subId }
+        : {
+            host: req.user._id,
+            title: cleanTitle,
+            status: meetingStatus,
+            createdAt: { $gte: new Date(Date.now() - 15000) }
+          };
+
+      const existingMeeting = await Meeting.findOne(mongoQuery)
+        .populate('host', 'name email avatar title department');
+
+      if (existingMeeting) {
+        recentCreations.set(dedupeKey, { data: existingMeeting, timestamp: Date.now() });
+        return existingMeeting;
+      }
+
+      // 4b. Generate guaranteed collision-free unique meeting code
+      const code = await generateUniqueMeetingCode();
+
+      const meeting = await Meeting.create({
+        title: cleanTitle,
+        description: cleanDesc,
+        code,
+        clientSubmissionId: subId || undefined,
+        host: req.user._id,
+        scheduledAt: scheduledDate,
+        status: meetingStatus,
+        settings: settings || {
+          muteOnJoin: false,
+          allowScreenShare: true,
+          aiTranscriptionEnabled: true
+        },
+        participants: [
+          {
+            user: req.user._id,
+            name: req.user.name,
+            email: req.user.email,
+            avatar: req.user.avatar,
+            role: 'host',
+            joinedAt: new Date()
+          }
+        ]
+      });
+
+      const populated = await Meeting.findById(meeting._id).populate('host', 'name email avatar title department');
+      recentCreations.set(dedupeKey, { data: populated, timestamp: Date.now() });
+      return populated;
+    };
+
+    const creationPromise = executeCreation();
+    inFlightCreations.set(dedupeKey, creationPromise);
+
+    let populated;
+    try {
+      populated = await creationPromise;
+    } finally {
+      inFlightCreations.delete(dedupeKey);
+    }
 
     res.status(201).json({
       success: true,

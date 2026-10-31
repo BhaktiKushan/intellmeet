@@ -152,6 +152,11 @@ const meetingSchema = new mongoose.Schema(
       unique: true,
       index: true
     },
+    clientSubmissionId: {
+      type: String,
+      sparse: true,
+      index: true
+    },
     host: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
@@ -256,5 +261,11 @@ const meetingSchema = new mongoose.Schema(
     timestamps: true
   }
 );
+
+// High-performance compound indexes for fast query resolution
+meetingSchema.index({ host: 1, createdAt: -1 });
+meetingSchema.index({ 'participants.user': 1, createdAt: -1 });
+meetingSchema.index({ status: 1, createdAt: -1 });
+meetingSchema.index({ host: 1, status: 1, createdAt: -1 });
 
 export default mongoose.model('Meeting', meetingSchema);
