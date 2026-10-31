@@ -19,8 +19,12 @@ router.get('/dashboard', protect, async (req, res, next) => {
     // Industry baseline: each meeting follow-up takes 45 mins. AI reduces it by ~60% (saving ~27 mins per meeting)
     const hoursSaved = ((totalMeetings * 27) / 60).toFixed(1);
 
-    // Recent meetings
-    const recentMeetings = await Meeting.find()
+    // Recent meetings scoped to user
+    const meetingQuery = req.user.role === 'admin'
+      ? {}
+      : { $or: [{ host: req.user._id }, { 'participants.user': req.user._id }] };
+
+    const recentMeetings = await Meeting.find(meetingQuery)
       .populate('host', 'name email avatar')
       .sort({ createdAt: -1 })
       .limit(5);

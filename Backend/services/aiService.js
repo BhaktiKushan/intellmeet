@@ -534,8 +534,76 @@ Return ONLY valid JSON matching:
   };
 };
 
-export const transcribeAudio = async (audioBuffer) => {
-  return 'Audio processed via real-time speech processor.';
+export const transcribeAudio = async (audioBuffer, mimeType = 'audio/webm') => {
+  const geminiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!geminiKey || geminiKey.length < 10) {
+    return '';
+  }
+
+  try {
+    const base64Audio = Buffer.isBuffer(audioBuffer)
+      ? audioBuffer.toString('base64')
+      : typeof audioBuffer === 'string'
+      ? audioBuffer.replace(/^data:audio\/[^;]+;base64,/, '')
+      : null;
+
+    if (!base64Audio) return '';
+
+    const candidateModels = [
+      'gemini-3.1-flash-lite',
+      'gemini-flash-lite-latest',
+      'gemini-3.5-flash-lite',
+      'gemini-flash-latest'
+    ];
+
+    const cleanMime = (mimeType || 'audio/webm').split(';')[0];
+
+    for (const model of candidateModels) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  {
+                    inlineData: {
+                      mimeType: cleanMime,
+                      data: base64Audio
+                    }
+                  },
+                  {
+                    text: 'Transcribe the spoken human speech in this meeting audio clip with exact wording. Return ONLY the transcribed text. If no clear human speech is heard, return empty string.'
+                  }
+                ]
+              }
+            ],
+            generationConfig: {
+              temperature: 0.1,
+              maxOutputTokens: 250
+            }
+          })
+        });
+
+        if (res.ok) {
+          const json = await res.json();
+          const candidateText = json.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '';
+          if (candidateText && !candidateText.toLowerCase().includes('no clear human speech') && !candidateText.toLowerCase().includes('no clear speech')) {
+            console.log(`[AI Service] Audio transcribed via Gemini (${model}): "${candidateText}"`);
+            return candidateText;
+          }
+        }
+      } catch (err) {
+        // Continue to fallback model
+      }
+    }
+  } catch (outer) {
+    console.warn('[AI Service] Audio transcription notice:', outer.message);
+  }
+
+  return '';
 };
 
 /**

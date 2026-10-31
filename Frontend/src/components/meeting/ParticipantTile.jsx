@@ -28,7 +28,6 @@ export const ParticipantTile = ({
   aspectRatio = '16/9'
 }) => {
   const videoRef = useRef(null);
-  const audioRef = useRef(null);
   const [showMenu, setShowMenu] = useState(false);
   const [isAudioElementMuted, setIsAudioElementMuted] = useState(false);
 
@@ -53,26 +52,19 @@ export const ParticipantTile = ({
       }
       videoRef.current.play().catch(() => {});
     }
-    if (audioRef.current && stream && !isLocal) {
-      if (audioRef.current.srcObject !== stream) {
-        audioRef.current.srcObject = stream;
-      }
-      audioRef.current.play().catch((err) => {
-        console.warn('[Remote Audio] Autoplay note:', err);
-      });
-    }
   }, [stream, isLocal]);
 
   const hasVideoStream = Boolean(stream && stream.getVideoTracks().length > 0 && !peer.isVideoOff);
   const isSpeaking = peer.isSpeaking && !peer.isAudioMuted;
 
-  // Toggle local speaker audio for this specific remote peer
+  // Toggle local speaker audio for this specific remote peer (controls PersistentRemoteAudio)
   const toggleMutePeerAudio = (e) => {
     e.stopPropagation();
     const nextMuted = !isAudioElementMuted;
     setIsAudioElementMuted(nextMuted);
-    if (audioRef.current) {
-      audioRef.current.muted = nextMuted;
+    const audioEl = document.getElementById(`persistent-audio-${peer.socketId}`);
+    if (audioEl) {
+      audioEl.muted = nextMuted;
     }
   };
 
@@ -104,17 +96,7 @@ export const ParticipantTile = ({
         userSelect: 'none'
       }}
     >
-      {/* Dedicated Remote Audio Playback Element */}
-      {!isLocal && (
-        <audio
-          ref={audioRef}
-          autoPlay
-          playsInline
-          muted={isAudioElementMuted}
-        />
-      )}
-
-      {/* Video Element (Video display only; audio handled by dedicated audio element) */}
+      {/* Video Element (Video display only; audio handled by PersistentRemoteAudio in MeetingRoomPage) */}
       <video
         ref={videoRef}
         autoPlay

@@ -1,8 +1,28 @@
 import express from 'express';
-import { generateMeetingSummary, translateText, detectLiveTopic } from '../services/aiService.js';
+import { generateMeetingSummary, translateText, detectLiveTopic, transcribeAudio } from '../services/aiService.js';
 import { protect } from '../middleware/auth.js';
 
 const router = express.Router();
+
+// Real-time AI Audio Speech-to-Text Transcription (Mobile & Cross-Browser Engine)
+router.post('/transcribe', protect, async (req, res, next) => {
+  try {
+    const { audioBase64, mimeType } = req.body;
+    if (!audioBase64) {
+      return res.status(400).json({ success: false, message: 'audioBase64 is required' });
+    }
+
+    const text = await transcribeAudio(audioBase64, mimeType || 'audio/webm');
+    res.json({
+      success: true,
+      data: {
+        text
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // Real-time AI Live Topic Detection
 router.post('/detect-topic', protect, async (req, res, next) => {

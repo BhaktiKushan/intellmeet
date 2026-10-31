@@ -13,7 +13,17 @@ router.get('/', protect, async (req, res, next) => {
 
     if (status) query.status = status;
     if (priority) query.priority = priority;
-    if (assignee) query.assignee = assignee;
+
+    if (assignee === 'me') {
+      query.assignee = req.user._id;
+    } else if (assignee) {
+      query.assignee = assignee;
+    } else if (req.user.role !== 'admin') {
+      query.$or = [
+        { assignee: req.user._id },
+        { creator: req.user._id }
+      ];
+    }
 
     const tasks = await Task.find(query)
       .populate('assignee', 'name email avatar title department')

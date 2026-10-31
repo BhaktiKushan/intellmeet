@@ -1,5 +1,5 @@
 import Meeting from '../models/Meeting.js';
-import { detectLiveTopic } from './aiService.js';
+import { detectLiveTopic, transcribeAudio } from './aiService.js';
 
 export const setupSocketIO = (io) => {
   // Store active rooms in-memory: roomId -> { users: Map, hostSocketId, presenter, settings, recording }
@@ -544,6 +544,45 @@ export const setupSocketIO = (io) => {
         }
       } catch (err) {
         console.warn('[Socket] Translation persistence notice:', err.message);
+      }
+    });
+
+    // Real-Time Mobile Audio Speech Processing (Cross-Device AI Assistant Fallback)
+    socket.on('mobile-audio-speech', async ({ roomId, audioBase64, mimeType, speaker, userId }) => {
+      if (!audioBase64) return;
+      const room = rooms.get(roomId);
+      const sender = room?.users.get(socket.id);
+      if (sender?.isAudioMuted) return;
+
+      const verifiedSpeaker = sender?.name || speaker || 'Participant';
+      try {
+        const text = await transcribeAudio(audioBase64, mimeType || 'audio/webm');
+        if (text && text.trim().length > 0) {
+          const rawText = text.trim();
+          const segmentId = `seg-mob-${socket.id}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+          const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+          const transcriptItem = {
+            segmentId,
+            speaker: verifiedSpeaker,
+            userId: sender?.id || userId || null,
+            participantId: socket.id,
+            text: rawText,
+            timestamp,
+            isFinal: true
+          };
+
+          // Broadcast to all peers in the room
+          io.to(roomId).emit('transcript-update', transcriptItem);
+
+          // Persist in MongoDB
+          await Meeting.findOneAndUpdate(
+            { code: roomId },
+            { $push: { transcript: transcriptItem } }
+          );
+        }
+      } catch (err) {
+        console.warn('[Socket] Mobile audio speech notice:', err.message);
       }
     });
 

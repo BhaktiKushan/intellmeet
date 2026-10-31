@@ -468,6 +468,9 @@ button, a, input, select, textarea {
     justify-content: center !important;
     padding: 0 10px !important;
   }
+  .meeting-controls-dock button {
+    border-radius: 50% !important;
+  }
 }
 
 /* Media Query: Standard Mobile Devices (<= 640px) */
@@ -500,10 +503,10 @@ button, a, input, select, textarea {
     border: none !important;
   }
   .meeting-controls-dock {
-    height: 68px !important;
-    padding: 0 8px !important;
+    height: calc(68px + env(safe-area-inset-bottom, 0px)) !important;
+    padding: 0 8px max(8px, env(safe-area-inset-bottom, 8px)) !important;
     gap: 6px !important;
-    justify-content: space-between !important;
+    justify-content: space-around !important;
   }
   .meeting-controls-dock button {
     width: 44px !important;
