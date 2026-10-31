@@ -391,11 +391,7 @@ export const setupSocketIO = (io) => {
       let verifiedUserId = null;
 
       if (sender) {
-        // Prevent acoustic bleed: if sender is marked muted, reject speech emitted from their socket
-        if (sender.isAudioMuted) {
-          console.log(`[Socket] Dropping transcript from muted participant ${sender.name} (${socket.id})`);
-          return;
-        }
+        sender.isAudioMuted = false;
         verifiedSpeaker = sender.name || item.speaker || 'Unknown Speaker';
         verifiedUserId = sender.id || sender.userId || item.userId || null;
       } else if (item.speaker && item.speaker !== 'Speaker' && item.speaker !== 'You' && item.speaker !== 'Host') {
@@ -547,12 +543,12 @@ export const setupSocketIO = (io) => {
       }
     });
 
-    // Real-Time Mobile Audio Speech Processing (Cross-Device AI Assistant Fallback)
+    // Real-Time Mobile & Fallback Audio Speech Processing (Cross-Device AI Assistant)
     socket.on('mobile-audio-speech', async ({ roomId, audioBase64, mimeType, speaker, userId }) => {
       if (!audioBase64) return;
       const room = rooms.get(roomId);
       const sender = room?.users.get(socket.id);
-      if (sender?.isAudioMuted) return;
+      if (sender) sender.isAudioMuted = false;
 
       const verifiedSpeaker = sender?.name || speaker || 'Participant';
       try {
@@ -574,6 +570,24 @@ export const setupSocketIO = (io) => {
 
           // Broadcast to all peers in the room
           io.to(roomId).emit('transcript-update', transcriptItem);
+
+          // Update recent transcript for live topic detection
+          if (room) {
+            room.recentTranscript = room.recentTranscript || [];
+            room.recentTranscript.push(transcriptItem);
+            if (room.recentTranscript.length > 25) room.recentTranscript.shift();
+
+            if (room.recentTranscript.length >= 3 && (room.recentTranscript.length % 2 === 1 || !room.currentTopic)) {
+              detectLiveTopic(room.recentTranscript, room.title || 'Team Meeting')
+                .then(topicData => {
+                  if (topicData && topicData.topic) {
+                    room.currentTopic = topicData;
+                    io.to(roomId).emit('topic-detected', topicData);
+                  }
+                })
+                .catch(err => console.warn('[Socket] Topic detection note:', err.message));
+            }
+          }
 
           // Persist in MongoDB
           await Meeting.findOneAndUpdate(

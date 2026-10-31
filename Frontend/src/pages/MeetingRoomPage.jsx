@@ -356,8 +356,12 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
           }
         });
       });
+      // Ensure speech assistant is initialized if meeting is already live
+      if (!inLobby && socketRef.current && isSpeechRecognitionActiveRef.current) {
+        initSpeechRecognition(socketRef.current);
+      }
     }
-  }, [localStream]);
+  }, [localStream, inLobby, initSpeechRecognition]);
 
   useEffect(() => {
     remoteStreamsRef.current = remoteStreams;
@@ -1130,79 +1134,130 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
     initSpeechRecognition(socket);
   };
 
-  // Mobile Audio Speech Processing Fallback (cross-device real-time Gemini AI transcription)
+  // Mobile & Cross-Device Audio Stream Processor (Standalone Complete File Slices for Gemini AI)
   const startMobileAudioAssistant = useCallback((socket) => {
-    if (mobileAudioRecorderRef.current || !socket) return;
-    if (!localStreamRef.current) return;
+    if (!socket || isCleaningUpRef.current) return;
+    if (mobileAudioRecorderRef.current) return;
+
+    if (!localStreamRef.current) {
+      setTimeout(() => startMobileAudioAssistant(socket), 1000);
+      return;
+    }
     const audioTrack = localStreamRef.current.getAudioTracks()[0];
-    if (!audioTrack) return;
+    if (!audioTrack) {
+      setTimeout(() => startMobileAudioAssistant(socket), 1000);
+      return;
+    }
 
     try {
+      let activeMimeType = 'audio/webm;codecs=opus';
+      if (!MediaRecorder.isTypeSupported(activeMimeType)) activeMimeType = 'audio/webm';
+      if (!MediaRecorder.isTypeSupported(activeMimeType)) activeMimeType = 'audio/mp4';
+      if (!MediaRecorder.isTypeSupported(activeMimeType)) activeMimeType = '';
+
       const audioStream = new MediaStream([audioTrack]);
-      let mimeType = 'audio/webm;codecs=opus';
-      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'audio/webm';
-      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'audio/mp4';
-      if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = '';
 
-      const recorder = mimeType ? new MediaRecorder(audioStream, { mimeType }) : new MediaRecorder(audioStream);
-      mobileAudioRecorderRef.current = recorder;
+      const recordSlice = () => {
+        if (isCleaningUpRef.current) return;
+        if (isAudioMutedRef.current || !isSpeechRecognitionActiveRef.current) {
+          mobileAudioIntervalRef.current = setTimeout(recordSlice, 800);
+          return;
+        }
 
-      recorder.ondataavailable = async (e) => {
-        if (!e.data || e.data.size < 600) return;
-        if (isAudioMutedRef.current || !isSpeechRecognitionActiveRef.current) return;
+        try {
+          const chunks = [];
+          const recorder = activeMimeType
+            ? new MediaRecorder(audioStream, { mimeType: activeMimeType })
+            : new MediaRecorder(audioStream);
+          mobileAudioRecorderRef.current = recorder;
 
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const res = reader.result;
-          if (res && typeof res === 'string') {
-            const base64Audio = res.split(',')[1];
-            if (base64Audio && socketRef.current) {
-              socketRef.current.emit('mobile-audio-speech', {
-                roomId,
-                audioBase64: base64Audio,
-                mimeType: e.data.type || mimeType || 'audio/webm',
-                speaker: confirmedNameRef.current || user?.name || 'Mobile Participant',
-                userId: user?._id || null
-              });
+          recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) chunks.push(e.data);
+          };
+
+          recorder.onstop = () => {
+            if (chunks.length > 0 && !isAudioMutedRef.current && isSpeechRecognitionActiveRef.current && !isCleaningUpRef.current) {
+              const completeBlob = new Blob(chunks, { type: activeMimeType || 'audio/webm' });
+              // Check if blob is large enough to contain speech (> 1.2KB)
+              if (completeBlob.size > 1200) {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                  const res = reader.result;
+                  if (res && typeof res === 'string') {
+                    const base64Audio = res.split(',')[1];
+                    if (base64Audio && socketRef.current) {
+                      socketRef.current.emit('mobile-audio-speech', {
+                        roomId,
+                        audioBase64,
+                        mimeType: completeBlob.type || 'audio/webm',
+                        speaker: confirmedNameRef.current || user?.name || 'Participant',
+                        userId: user?._id || null
+                      });
+                    }
+                  }
+                };
+                reader.readAsDataURL(completeBlob);
+              }
             }
+            if (!isCleaningUpRef.current) {
+              mobileAudioIntervalRef.current = setTimeout(recordSlice, 250);
+            }
+          };
+
+          // Record for 3.5s then stop to ensure full valid standalone container headers
+          recorder.start();
+          setTimeout(() => {
+            if (recorder && recorder.state === 'recording') {
+              try { recorder.stop(); } catch (e) {}
+            }
+          }, 3500);
+
+        } catch (err) {
+          console.warn('[AudioAssistant] Recording cycle notice:', err.message);
+          if (!isCleaningUpRef.current) {
+            mobileAudioIntervalRef.current = setTimeout(recordSlice, 2000);
           }
-        };
-        reader.readAsDataURL(e.data);
+        }
       };
 
-      // Record audio slices every 3.5 seconds
-      recorder.start(3500);
-      console.log('[MobileAI] Mobile Audio Assistant started successfully');
+      recordSlice();
+      console.log('[MobileAI] Standalone audio cycle processor initialized');
     } catch (e) {
       console.warn('[MobileAI] Could not initialize mobile audio assistant:', e.message);
     }
   }, [roomId, user]);
 
-  // Browser Web Speech API for AI Speech-to-Text & Translation (with Mobile Audio Assistant fallback)
-  const initSpeechRecognition = (socket) => {
+  // Browser Web Speech API for AI Speech-to-Text & Translation (with Mobile & Fallback Assistant)
+  const initSpeechRecognition = useCallback((socket) => {
+    if (!socket || isCleaningUpRef.current) return;
     const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-    if (!SpeechRecognition) {
-      console.log('[SpeechRecognition] Native Web Speech API not available, starting Mobile Audio Assistant');
+    // On mobile devices, Web Speech API conflicts with WebRTC mic hardware lock or crashes.
+    // Use the reliable Gemini multimodal audio stream assistant directly!
+    if (isMobile || !SpeechRecognition) {
+      console.log('[SpeechRecognition] Using Real-Time Gemini Multimodal Audio Assistant');
       startMobileAudioAssistant(socket);
       return;
     }
 
     try {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.onend = null;
+          recognitionRef.current.onerror = null;
+          recognitionRef.current.abort();
+        } catch (e) {}
+        recognitionRef.current = null;
+      }
+
       const recognition = new SpeechRecognition();
-      // On mobile browsers (iOS Safari, Android Chrome), continuous=true causes immediate crashes or aborts
-      recognition.continuous = !isMobile;
-      recognition.interimResults = true; // Enables live real-time speech preview without duplicate commits
+      recognition.continuous = true;
+      recognition.interimResults = true;
       recognition.lang = 'en-US';
 
       const handleFinalTranscript = async (finalText) => {
-        if (!finalText) return;
-        // Strict guard: if muted, immediately discard (eliminates acoustic bleed from laptop speakers)
-        if (isAudioMutedRef.current) {
-          console.log('[SpeechRecognition] Suppressed speech while muted (preventing acoustic bleed)');
-          return;
-        }
+        if (!finalText || isAudioMutedRef.current || isCleaningUpRef.current) return;
 
         const cleanText = finalText.trim();
         if (!cleanText) return;
@@ -1215,7 +1270,6 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
           lastFinalTextRef.current.text === normalized &&
           now - lastFinalTextRef.current.time < 3500
         ) {
-          console.log('[SpeechRecognition] Suppressed duplicate final text:', cleanText);
           return;
         }
         lastFinalTextRef.current = { text: normalized, time: now };
@@ -1267,8 +1321,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       };
 
       recognition.onresult = (event) => {
-        // Discard all speech if muted
-        if (isAudioMutedRef.current) return;
+        if (isAudioMutedRef.current || isCleaningUpRef.current) return;
 
         let interimText = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
@@ -1297,15 +1350,11 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       };
 
       recognition.onend = () => {
-        // Only restart if the user is unmuted and session is still active
+        // Automatically restart fresh session if unmuted and still active
         if (!isAudioMutedRef.current && isSpeechRecognitionActiveRef.current && !isCleaningUpRef.current) {
           setTimeout(() => {
-            if (!isAudioMutedRef.current && isSpeechRecognitionActiveRef.current && !isCleaningUpRef.current) {
-              try {
-                recognition.start();
-              } catch (err) {
-                // Ignore if already listening
-              }
+            if (!isAudioMutedRef.current && isSpeechRecognitionActiveRef.current && !isCleaningUpRef.current && socketRef.current) {
+              initSpeechRecognition(socketRef.current);
             }
           }, 300);
         }
@@ -1313,8 +1362,9 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
 
       recognition.onerror = (err) => {
         if (err.error !== 'no-speech' && err.error !== 'aborted') {
-          console.warn('[SpeechRecognition] Engine event:', err.error);
-          if (err.error === 'audio-capture' || err.error === 'not-allowed' || err.error === 'service-not-allowed') {
+          console.warn('[SpeechRecognition] Desktop engine event:', err.error);
+          // If desktop Web Speech API has a network/capture issue, switch to audio stream assistant
+          if (err.error === 'audio-capture' || err.error === 'not-allowed' || err.error === 'service-not-allowed' || err.error === 'network') {
             startMobileAudioAssistant(socket);
           }
         }
@@ -1332,7 +1382,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       console.warn('[SpeechRecognition] Init note:', err.message);
       startMobileAudioAssistant(socket);
     }
-  };
+  }, [roomId, user, startMobileAudioAssistant]);
 
   // ----------------------------------------------------
   // Audio & Video Toggles
@@ -1349,19 +1399,12 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         isAudioMutedRef.current = nextMuted;
 
         if (nextMuted) {
-          if (recognitionRef.current) {
-            try { recognitionRef.current.abort(); } catch (e) {}
-          }
-          if (mobileAudioRecorderRef.current && mobileAudioRecorderRef.current.state === 'recording') {
-            try { mobileAudioRecorderRef.current.pause(); } catch (e) {}
-          }
+          // Suppress interim preview when muted
           setInterimTranscript(null);
         } else {
-          if (mobileAudioRecorderRef.current && mobileAudioRecorderRef.current.state === 'paused') {
-            try { mobileAudioRecorderRef.current.resume(); } catch (e) {}
-          }
-          if (isSpeechRecognitionActiveRef.current && recognitionRef.current) {
-            try { recognitionRef.current.start(); } catch (e) {}
+          // Resume speech recognition or audio assistant if not active
+          if (isSpeechRecognitionActiveRef.current && socketRef.current) {
+            initSpeechRecognition(socketRef.current);
           }
         }
 
@@ -1373,6 +1416,9 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       const nextMuted = !isAudioMuted;
       setIsAudioMuted(nextMuted);
       isAudioMutedRef.current = nextMuted;
+      if (!nextMuted && isSpeechRecognitionActiveRef.current && socketRef.current) {
+        initSpeechRecognition(socketRef.current);
+      }
     }
   };
 

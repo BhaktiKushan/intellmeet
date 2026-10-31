@@ -473,32 +473,39 @@ Return ONLY valid JSON matching:
   "decisions": ["Suggested or agreed decision if any"]
 }`;
 
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${geminiKey}`;
-      const res = await fetch(geminiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(3500),
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.1,
-            responseMimeType: 'application/json'
-          }
-        })
-      });
+      const geminiModels = ['gemini-flash-lite-latest', 'gemini-2.5-flash', 'gemini-3.1-flash-lite'];
+      for (const model of geminiModels) {
+        try {
+          const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
+          const res = await fetch(geminiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal: AbortSignal.timeout(7000),
+            body: JSON.stringify({
+              contents: [{ role: 'user', parts: [{ text: prompt }] }],
+              generationConfig: {
+                temperature: 0.1,
+                responseMimeType: 'application/json'
+              }
+            })
+          });
 
-      if (res.ok) {
-        const data = await res.json();
-        const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        const parsed = extractJson(candidateText);
-        if (parsed && parsed.topic) {
-          return {
-            topic: parsed.topic,
-            summary: parsed.summary || 'Team discussion in progress.',
-            contributors: Array.isArray(parsed.contributors) ? parsed.contributors : [],
-            questions: Array.isArray(parsed.questions) ? parsed.questions : [],
-            decisions: Array.isArray(parsed.decisions) ? parsed.decisions : []
-          };
+          if (res.ok) {
+            const data = await res.json();
+            const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            const parsed = extractJson(candidateText);
+            if (parsed && parsed.topic) {
+              return {
+                topic: parsed.topic,
+                summary: parsed.summary || 'Team discussion in progress.',
+                contributors: Array.isArray(parsed.contributors) ? parsed.contributors : [],
+                questions: Array.isArray(parsed.questions) ? parsed.questions : [],
+                decisions: Array.isArray(parsed.decisions) ? parsed.decisions : []
+              };
+            }
+          }
+        } catch (inner) {
+          // Try next model
         }
       }
     } catch (e) {
@@ -550,8 +557,9 @@ export const transcribeAudio = async (audioBuffer, mimeType = 'audio/webm') => {
     if (!base64Audio) return '';
 
     const candidateModels = [
-      'gemini-3.1-flash-lite',
       'gemini-flash-lite-latest',
+      'gemini-2.5-flash',
+      'gemini-3.1-flash-lite',
       'gemini-3.5-flash-lite',
       'gemini-flash-latest'
     ];
@@ -634,8 +642,9 @@ export const translateText = async (text, targetLanguage = 'en', sourceLanguage 
 
   if (geminiKey && geminiKey.length > 10) {
     const candidateModels = [
-      'gemini-3.1-flash-lite',
       'gemini-flash-lite-latest',
+      'gemini-2.5-flash',
+      'gemini-3.1-flash-lite',
       'gemini-3.5-flash-lite',
       'gemini-flash-latest'
     ];
