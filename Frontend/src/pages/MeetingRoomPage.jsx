@@ -203,6 +203,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
   const remoteStreamsRef = useRef({});
   const peersRef = useRef({}); // { [socketId]: RTCPeerConnection }
   const peerStatesRef = useRef({}); // { [socketId]: { isMakingOffer: boolean, isPolite: boolean } }
+  const peerOffersRef = useRef({}); // { [socketId]: () => Promise<void> }
   const iceQueueRef = useRef({}); // { [socketId]: [candidate] }
   const socketRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -376,6 +377,8 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         if (pc.signalingState === 'closed') return;
         const senders = pc.getSenders();
         localStream.getTracks().forEach(track => {
+          // If screen sharing is active, do not overwrite the active screen share video track
+          if (track.kind === 'video' && screenShareTrackRef.current) return;
           const sender = senders.find(s => s.track && s.track.kind === track.kind);
           if (sender) {
             sender.replaceTrack(track).catch(() => {});
@@ -770,6 +773,8 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       }
     };
 
+    peerOffersRef.current[targetSocketId] = makeOffer;
+
     pc.onnegotiationneeded = () => {
       // Perfect Negotiation safely resolves glare and lets any participant start/stop screen share
       makeOffer();
@@ -942,6 +947,9 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       }
       if (peerStatesRef.current[socketId]) {
         delete peerStatesRef.current[socketId];
+      }
+      if (peerOffersRef.current[socketId]) {
+        delete peerOffersRef.current[socketId];
       }
       if (iceQueueRef.current[socketId]) {
         delete iceQueueRef.current[socketId];
@@ -1487,30 +1495,43 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         setScreenShareStream(screenStream);
         setIsScreenSharing(true);
 
-        // Ensure video transceiver direction is 'sendrecv' and replace or add track
-        Object.values(peersRef.current).forEach(pc => {
-          const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
-          const videoTransceiver = transceivers.find(t => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video');
-          if (videoTransceiver && videoTransceiver.direction !== 'sendrecv') {
-            videoTransceiver.direction = 'sendrecv';
+        // Ensure video transceiver direction is 'sendrecv', replace/add track, and negotiate
+        for (const [targetSocketId, pc] of Object.entries(peersRef.current)) {
+          if (pc.signalingState === 'closed') continue;
+          try {
+            const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
+            let videoTransceiver = transceivers.find(t => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video');
+
+            if (!videoTransceiver) {
+              try {
+                videoTransceiver = pc.addTransceiver(screenTrack, { direction: 'sendrecv', streams: [screenStream] });
+              } catch (e) {
+                console.warn('[Screen Share] addTransceiver note:', e);
+              }
+            } else {
+              videoTransceiver.direction = 'sendrecv';
+              const sender = videoTransceiver.sender || pc.getSenders().find(s => s.track && s.track.kind === 'video') || pc.getSenders().find(s => s.track === null);
+              if (sender) {
+                await sender.replaceTrack(screenTrack).catch(err => {
+                  console.warn('[Screen Share replaceTrack note]:', err);
+                });
+              } else {
+                try {
+                  pc.addTrack(screenTrack, screenStream);
+                } catch (err) {
+                  console.warn('[Screen Share addTrack note]:', err);
+                }
+              }
+            }
+          } catch (err) {
+            console.warn(`[Screen Share] Peer track update note (${targetSocketId}):`, err);
           }
 
-          let sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-          if (!sender) {
-            sender = pc.getSenders().find(s => s.track === null);
+          // Trigger SDP renegotiation so peer accepts video in sendrecv
+          if (peerOffersRef.current[targetSocketId]) {
+            peerOffersRef.current[targetSocketId]();
           }
-          if (sender) {
-            sender.replaceTrack(screenTrack).catch(err => {
-              console.warn('[Screen Share replaceTrack note]:', err);
-            });
-          } else {
-            try {
-              pc.addTrack(screenTrack, screenStream);
-            } catch (err) {
-              console.warn('[Screen Share addTrack note]:', err);
-            }
-          }
-        });
+        }
 
         // Notify socket server and all peers
         if (socketRef.current) {
@@ -1544,21 +1565,36 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
 
     // Restore original camera track on all peer connections
     const originalVideoTrack = originalCameraTrackRef.current || (localStreamRef.current && localStreamRef.current.getVideoTracks()[0]);
-    Object.values(peersRef.current).forEach(pc => {
-      const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
-      const videoTransceiver = transceivers.find(t => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video');
+    for (const [targetSocketId, pc] of Object.entries(peersRef.current)) {
+      if (pc.signalingState === 'closed') continue;
+      try {
+        const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
+        const videoTransceiver = transceivers.find(t => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video');
 
-      const sender = pc.getSenders().find(s => s.track && (s.track === screenShareTrackRef.current || s.track.kind === 'video') || (s.track === null));
-      if (sender) {
-        if (originalVideoTrack && !isVideoOff) {
-          if (videoTransceiver) videoTransceiver.direction = 'sendrecv';
-          sender.replaceTrack(originalVideoTrack).catch(() => {});
-        } else {
-          if (videoTransceiver) videoTransceiver.direction = 'recvonly';
-          sender.replaceTrack(null).catch(() => {});
+        if (videoTransceiver) {
+          if (originalVideoTrack && !isVideoOff) {
+            videoTransceiver.direction = 'sendrecv';
+            const sender = videoTransceiver.sender || pc.getSenders().find(s => s.track && s.track.kind === 'video');
+            if (sender) {
+              sender.replaceTrack(originalVideoTrack).catch(() => {});
+            }
+          } else {
+            videoTransceiver.direction = 'recvonly';
+            const sender = videoTransceiver.sender || pc.getSenders().find(s => s.track && s.track.kind === 'video');
+            if (sender) {
+              sender.replaceTrack(null).catch(() => {});
+            }
+          }
         }
+      } catch (err) {
+        console.warn(`[Stop Screen Share] Track restore note (${targetSocketId}):`, err);
       }
-    });
+
+      // Trigger SDP renegotiation so remote peer adjusts back
+      if (peerOffersRef.current[targetSocketId]) {
+        peerOffersRef.current[targetSocketId]();
+      }
+    }
 
     // Notify socket server
     if (socketRef.current) {

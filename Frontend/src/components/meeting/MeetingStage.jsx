@@ -73,7 +73,41 @@ export const MeetingStage = ({
     ? (screenShareStream || localStream)
     : (presenterSocketId ? remoteStreams[presenterSocketId] : null);
 
-  const hasPresenterVideo = Boolean(presenterStream && presenterStream.getVideoTracks && presenterStream.getVideoTracks().length > 0);
+  const [, setTrackRevision] = useState(0);
+
+  // Dynamically listen for tracks added or unmuted on presenterStream
+  useEffect(() => {
+    if (!presenterStream || typeof presenterStream.addEventListener !== 'function') return;
+    const handleTracks = () => setTrackRevision(r => r + 1);
+
+    try {
+      presenterStream.addEventListener('addtrack', handleTracks);
+      presenterStream.addEventListener('removetrack', handleTracks);
+
+      const videoTracks = presenterStream.getVideoTracks ? presenterStream.getVideoTracks() : [];
+      videoTracks.forEach(t => {
+        t.addEventListener('unmute', handleTracks);
+        t.addEventListener('ended', handleTracks);
+      });
+
+      return () => {
+        try {
+          presenterStream.removeEventListener('addtrack', handleTracks);
+          presenterStream.removeEventListener('removetrack', handleTracks);
+          videoTracks.forEach(t => {
+            t.removeEventListener('unmute', handleTracks);
+            t.removeEventListener('ended', handleTracks);
+          });
+        } catch (e) {}
+      };
+    } catch (e) {}
+  }, [presenterStream]);
+
+  const activeVideoTracks = (presenterStream && typeof presenterStream.getVideoTracks === 'function')
+    ? presenterStream.getVideoTracks().filter(t => t.readyState !== 'ended')
+    : [];
+  const activeVideoTrackId = activeVideoTracks[0]?.id || 'no-track';
+  const hasPresenterVideo = activeVideoTracks.length > 0;
 
   // Clear pin if pinned peer left the room
   useEffect(() => {
@@ -150,12 +184,12 @@ export const MeetingStage = ({
         }}>
           {hasPresenterVideo ? (
             <video
-              key={`presenter-${presenterSocketId || 'screen'}`}
+              key={`presenter-${presenterSocketId || 'screen'}-${activeVideoTrackId}`}
               ref={(el) => {
-                if (el && el.srcObject !== presenterStream) {
-                  el.srcObject = presenterStream;
-                }
                 if (el) {
+                  if (el.srcObject !== presenterStream) {
+                    el.srcObject = presenterStream;
+                  }
                   el.play().catch(() => {});
                 }
               }}

@@ -629,18 +629,32 @@ ${rawTranscriptList.map(t => `[${safeString(t?.timestamp, '')}] **${safeString(t
               </h3>
             </div>
 
-            <p style={{
+            <div style={{
               fontSize: '0.96rem',
-              lineHeight: 1.7,
+              lineHeight: 1.75,
               color: 'var(--text-main)',
-              margin: 0
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '14px'
             }}>
-              {safeString(meeting.summary) || (
+              {safeString(meeting.summary) ? (
+                (safeString(meeting.summary).includes('\n\n')
+                  ? safeString(meeting.summary).split(/\n\s*\n/)
+                  : safeString(meeting.summary).split(/\n/)
+                )
+                  .map(p => p.trim())
+                  .filter(Boolean)
+                  .map((para, idx) => (
+                    <p key={idx} style={{ margin: 0, lineHeight: 1.75 }}>
+                      {para}
+                    </p>
+                  ))
+              ) : (
                 <span style={{ color: 'var(--text-dim)', fontStyle: 'italic' }}>
                   No verbal transcript was recorded for this meeting. Speak into the microphone during your meetings or type in chat to automatically generate detailed AI summaries.
                 </span>
               )}
-            </p>
+            </div>
           </div>
 
           {/* Key Discussion Points & Takeaways */}
