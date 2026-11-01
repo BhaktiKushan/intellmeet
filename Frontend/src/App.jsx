@@ -35,11 +35,19 @@ const parseRouteFromHash = (hashString, defaultUserId = null) => {
   }
 
   if (remaining.startsWith('room/')) {
-    const roomId = remaining.replace('room/', '').trim();
+    let roomId = remaining.replace('room/', '').trim();
+    if (roomId.startsWith('u/')) {
+      const parts = roomId.slice(2).split('/');
+      roomId = parts.slice(1).join('/');
+    }
     return { tab: 'meetings', roomId: roomId || null, summaryId: null, userId: parsedUserId };
   }
   if (remaining.startsWith('summary/')) {
-    const summaryId = clean.replace('summary/', '').trim();
+    let summaryId = remaining.replace('summary/', '').trim();
+    if (summaryId.startsWith('u/')) {
+      const parts = summaryId.slice(2).split('/');
+      summaryId = parts.slice(1).join('/');
+    }
     return { tab: 'meetings', roomId: null, summaryId: summaryId || null, userId: parsedUserId };
   }
 
@@ -76,9 +84,11 @@ export const App = () => {
       targetPath = target.replace(/^#\/?/, '').replace(/^u\/[^/]+\/?/, '');
     } else if (target && typeof target === 'object') {
       if (target.roomId) {
-        targetPath = `room/${target.roomId}`;
+        const cleanRoom = String(target.roomId).replace(/^#\/?/, '').replace(/^u\/[^/]+\/?/, '').replace(/^room\//, '').trim();
+        targetPath = `room/${cleanRoom}`;
       } else if (target.summaryId) {
-        targetPath = `summary/${target.summaryId}`;
+        const cleanSummary = String(target.summaryId).replace(/^#\/?/, '').replace(/^u\/[^/]+\/?/, '').replace(/^summary\//, '').trim();
+        targetPath = `summary/${cleanSummary}`;
       } else if (target.tab) {
         targetPath = target.tab;
       }

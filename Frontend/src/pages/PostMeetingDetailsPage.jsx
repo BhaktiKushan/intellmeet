@@ -41,6 +41,9 @@ export const PostMeetingDetailsPage = ({ meetingIdOrCode, onBack, onNavigateKanb
     if (typeof val === 'string') return val;
     if (typeof val === 'number' || typeof val === 'boolean') return String(val);
     if (typeof val === 'object') {
+      if (val.speaker && val.point) return `${safeString(val.speaker)}: ${safeString(val.point)}`;
+      if (val.speaker) return safeString(val.speaker, fallback);
+      if (val.point) return safeString(val.point, fallback);
       if (val.text) return safeString(val.text, fallback);
       if (val.title) return safeString(val.title, fallback);
       if (val.decision) return safeString(val.decision, fallback);
@@ -48,6 +51,7 @@ export const PostMeetingDetailsPage = ({ meetingIdOrCode, onBack, onNavigateKanb
       if (val.question) return safeString(val.question, fallback);
       if (val.task) return safeString(val.task, fallback);
       if (val.name) return safeString(val.name, fallback);
+      if (val.summary) return safeString(val.summary, fallback);
       try {
         return JSON.stringify(val);
       } catch (e) {
@@ -91,11 +95,24 @@ export const PostMeetingDetailsPage = ({ meetingIdOrCode, onBack, onNavigateKanb
     };
   };
 
+  const cleanMeetingIdentifier = React.useMemo(() => {
+    let id = String(meetingIdOrCode || '').trim();
+    if (id.startsWith('#')) id = id.replace(/^#\/?/, '');
+    if (id.startsWith('u/')) {
+      const parts = id.slice(2).split('/');
+      id = parts.slice(1).join('/');
+    }
+    if (id.includes('/')) {
+      id = id.split('/').pop().trim();
+    }
+    return id;
+  }, [meetingIdOrCode]);
+
   const loadMeetingDetails = async () => {
     setLoading(true);
     setSummaryError('');
     try {
-      const res = await api.getMeeting(meetingIdOrCode);
+      const res = await api.getMeeting(cleanMeetingIdentifier);
       const meetingData = res.data;
       setMeeting(meetingData);
 
@@ -119,7 +136,7 @@ export const PostMeetingDetailsPage = ({ meetingIdOrCode, onBack, onNavigateKanb
   };
 
   const triggerAiGeneration = async (currentMeeting) => {
-    const targetId = currentMeeting?._id || currentMeeting?.code || meetingIdOrCode;
+    const targetId = currentMeeting?.code || currentMeeting?._id || cleanMeetingIdentifier;
     if (!targetId) return;
 
     setReanalyzing(true);

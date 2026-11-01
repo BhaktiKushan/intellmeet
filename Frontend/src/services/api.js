@@ -18,10 +18,32 @@ const getHeaders = () => {
   return headers;
 };
 
+const cleanEndpointId = (val) => {
+  if (!val) return '';
+  let str = String(val).trim();
+  if (str.startsWith('#')) str = str.replace(/^#\/?/, '');
+  if (str.startsWith('u/')) {
+    const parts = str.slice(2).split('/');
+    str = parts.slice(1).join('/');
+  }
+  if (str.includes('/')) {
+    str = str.split('/').pop().trim();
+  }
+  return encodeURIComponent(str);
+};
+
 const handleResponse = async (res) => {
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`Server returned HTTP ${res.status}: ${text.slice(0, 120)}`);
+    }
+    throw new Error(`Unexpected non-JSON response from server (${contentType || 'HTML'})`);
+  }
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data.message || data.error || 'API Request Failed');
+    throw new Error(data.message || data.error || `Request failed with status ${res.status}`);
   }
   return data;
 };
@@ -79,7 +101,8 @@ export const api = {
   },
 
   getMeeting: async (codeOrId) => {
-    const res = await fetch(`${API_BASE}/meetings/${codeOrId}`, {
+    const clean = cleanEndpointId(codeOrId);
+    const res = await fetch(`${API_BASE}/meetings/${clean}`, {
       headers: getHeaders()
     });
     return handleResponse(res);
@@ -95,7 +118,8 @@ export const api = {
   },
 
   endMeeting: async (id, data = {}) => {
-    const res = await fetch(`${API_BASE}/meetings/${id}/end`, {
+    const clean = cleanEndpointId(id);
+    const res = await fetch(`${API_BASE}/meetings/${clean}/end`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify(data)
@@ -104,7 +128,8 @@ export const api = {
   },
 
   generateAiSummary: async (meetingId, transcript) => {
-    const res = await fetch(`${API_BASE}/meetings/${meetingId}/ai-intelligence`, {
+    const clean = cleanEndpointId(meetingId);
+    const res = await fetch(`${API_BASE}/meetings/${clean}/ai-intelligence`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify({ transcript })
@@ -113,7 +138,8 @@ export const api = {
   },
 
   saveRecording: async (meetingId, recordingData) => {
-    const res = await fetch(`${API_BASE}/meetings/${meetingId}/recording`, {
+    const clean = cleanEndpointId(meetingId);
+    const res = await fetch(`${API_BASE}/meetings/${clean}/recording`, {
       method: 'POST',
       headers: getHeaders(),
       body: JSON.stringify(recordingData)

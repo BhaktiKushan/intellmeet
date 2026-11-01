@@ -637,18 +637,24 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
     peerStatesRef.current[targetSocketId] = { isMakingOffer: false, isPolite };
 
     // Add local media tracks (ensuring screen share track is attached if currently presenting)
+    if (screenShareTrackRef.current) {
+      try {
+        pc.addTrack(screenShareTrackRef.current, localStreamRef.current || new MediaStream());
+      } catch (e) {
+        console.warn('[WebRTC] add screen share track note:', e);
+      }
+    } else if (localStreamRef.current) {
+      const videoTrack = localStreamRef.current.getVideoTracks()[0];
+      if (videoTrack) {
+        try { pc.addTrack(videoTrack, localStreamRef.current); } catch (e) {}
+      }
+    }
+
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach(track => {
-        try {
-          if (track.kind === 'video' && screenShareTrackRef.current) {
-            pc.addTrack(screenShareTrackRef.current, localStreamRef.current);
-          } else {
-            pc.addTrack(track, localStreamRef.current);
-          }
-        } catch (e) {
-          console.warn('[WebRTC] addTrack note:', e);
-        }
-      });
+      const audioTrack = localStreamRef.current.getAudioTracks()[0];
+      if (audioTrack) {
+        try { pc.addTrack(audioTrack, localStreamRef.current); } catch (e) {}
+      }
     }
 
     // Ensure audio and video transceivers exist so reception is guaranteed even if local device lacks mic/camera
@@ -659,7 +665,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       try { pc.addTransceiver('audio', { direction: 'recvonly' }); } catch (e) {}
     }
     if (!hasVideoSender) {
-      try { pc.addTransceiver('video', { direction: 'recvonly' }); } catch (e) {}
+      try { pc.addTransceiver('video', { direction: screenShareTrackRef.current ? 'sendrecv' : 'recvonly' }); } catch (e) {}
     }
 
     // Remote track arrived
@@ -765,10 +771,8 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
     };
 
     pc.onnegotiationneeded = () => {
-      // Only the designated initiator initiates negotiation to prevent race condition offers
-      if (isInitiator) {
-        makeOffer();
-      }
+      // Perfect Negotiation safely resolves glare and lets any participant start/stop screen share
+      makeOffer();
     };
 
     // Trigger offer immediately if designated initiator!
@@ -957,6 +961,13 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         socketId: data.socketId,
         name: data.name
       });
+      // When a remote peer presents, ensure their video tile is not masked as video-off
+      setRemoteParticipants(prev => prev.map(p => {
+        if (p.socketId === data.socketId) {
+          return { ...p, isVideoOff: false };
+        }
+        return p;
+      }));
     });
 
     // Screen sharing stopped
@@ -1476,8 +1487,14 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         setScreenShareStream(screenStream);
         setIsScreenSharing(true);
 
-        // Replace or add video track across all remote peer connections
+        // Ensure video transceiver direction is 'sendrecv' and replace or add track
         Object.values(peersRef.current).forEach(pc => {
+          const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
+          const videoTransceiver = transceivers.find(t => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video');
+          if (videoTransceiver && videoTransceiver.direction !== 'sendrecv') {
+            videoTransceiver.direction = 'sendrecv';
+          }
+
           let sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
           if (!sender) {
             sender = pc.getSenders().find(s => s.track === null);
@@ -1527,14 +1544,21 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
 
     // Restore original camera track on all peer connections
     const originalVideoTrack = originalCameraTrackRef.current || (localStreamRef.current && localStreamRef.current.getVideoTracks()[0]);
-    if (originalVideoTrack) {
-      Object.values(peersRef.current).forEach(pc => {
-        const sender = pc.getSenders().find(s => s.track && (s.track === screenShareTrackRef.current || s.track.kind === 'video'));
-        if (sender) {
+    Object.values(peersRef.current).forEach(pc => {
+      const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
+      const videoTransceiver = transceivers.find(t => t.receiver?.track?.kind === 'video' || t.sender?.track?.kind === 'video');
+
+      const sender = pc.getSenders().find(s => s.track && (s.track === screenShareTrackRef.current || s.track.kind === 'video') || (s.track === null));
+      if (sender) {
+        if (originalVideoTrack && !isVideoOff) {
+          if (videoTransceiver) videoTransceiver.direction = 'sendrecv';
           sender.replaceTrack(originalVideoTrack).catch(() => {});
+        } else {
+          if (videoTransceiver) videoTransceiver.direction = 'recvonly';
+          sender.replaceTrack(null).catch(() => {});
         }
-      });
-    }
+      }
+    });
 
     // Notify socket server
     if (socketRef.current) {
@@ -1903,19 +1927,24 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
     terminateAllMediaAndConnections();
 
     const targetMeetingId = meeting?._id || meeting?.code || roomId;
+    let finalMeetingCode = meeting?.code || roomId;
+
     if (targetMeetingId) {
       try {
-        await api.endMeeting(targetMeetingId, {
+        const res = await api.endMeeting(targetMeetingId, {
           transcript: transcriptLogRef.current.length > 0 ? transcriptLogRef.current : transcriptLog,
           chatMessages: chatMessagesRef.current.length > 0 ? chatMessagesRef.current : chatMessages
         });
+        if (res?.data?.code) {
+          finalMeetingCode = res.data.code;
+        }
       } catch (err) {
         console.warn('[Leave Call] End meeting sync note:', err);
       }
     }
 
     if (onViewSummary) {
-      onViewSummary(meeting?.code || targetMeetingId || roomId);
+      onViewSummary(finalMeetingCode || meeting?.code || targetMeetingId || roomId);
     } else if (onLeaveRoom) {
       onLeaveRoom();
     }

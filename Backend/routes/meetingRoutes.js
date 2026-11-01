@@ -7,6 +7,21 @@ import { v4 as uuidv4 } from 'uuid';
 
 const router = express.Router();
 
+// Helper to extract clean meeting ID or code from parameterized URLs
+const extractCleanId = (raw) => {
+  if (!raw) return '';
+  let str = String(raw).trim();
+  if (str.startsWith('#')) str = str.replace(/^#\/?/, '');
+  if (str.startsWith('u/')) {
+    const parts = str.slice(2).split('/');
+    str = parts.slice(1).join('/');
+  }
+  if (str.includes('/')) {
+    str = str.split('/').pop().trim();
+  }
+  return str;
+};
+
 // Helper to generate a friendly meeting code
 const generateMeetingCode = () => {
   const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -89,9 +104,11 @@ router.post('/', protect, async (req, res, next) => {
 // Get meeting by Code or ID
 router.get('/:codeOrId', protect, async (req, res, next) => {
   try {
-    const cleanCodeOrId = (req.params.codeOrId || '').trim();
+    const cleanCodeOrId = extractCleanId(req.params.codeOrId);
     const isObjectId = /^[0-9a-fA-F]{24}$/.test(cleanCodeOrId);
-    const query = isObjectId ? { $or: [{ _id: cleanCodeOrId }, { code: cleanCodeOrId }] } : { code: cleanCodeOrId };
+    const query = isObjectId 
+      ? { $or: [{ _id: cleanCodeOrId }, { code: { $regex: new RegExp(`^${cleanCodeOrId}$`, 'i') } }] } 
+      : { code: { $regex: new RegExp(`^${cleanCodeOrId}$`, 'i') } };
 
     let meeting = await Meeting.findOne(query)
       .populate('host', 'name email avatar title department')
@@ -118,7 +135,6 @@ router.get('/:codeOrId', protect, async (req, res, next) => {
       meeting = await Meeting.findById(meeting._id).populate('host', 'name email avatar title department');
     }
 
-    // Meeting details fetched cleanly and idempotently
     res.json({
       success: true,
       data: meeting
@@ -154,9 +170,11 @@ router.put('/:id', protect, async (req, res, next) => {
 // End meeting and auto-generate AI Intelligence (Summary, Takeaways & Action Items)
 router.post('/:id/end', protect, async (req, res, next) => {
   try {
-    const cleanId = (req.params.id || '').trim();
+    const cleanId = extractCleanId(req.params.id);
     const isObjectId = /^[0-9a-fA-F]{24}$/.test(cleanId);
-    const query = isObjectId ? { $or: [{ _id: cleanId }, { code: cleanId }] } : { code: cleanId };
+    const query = isObjectId 
+      ? { $or: [{ _id: cleanId }, { code: { $regex: new RegExp(`^${cleanId}$`, 'i') } }] } 
+      : { code: { $regex: new RegExp(`^${cleanId}$`, 'i') } };
     let meeting = await Meeting.findOne(query);
 
     if (!meeting) {
@@ -199,20 +217,28 @@ router.post('/:id/end', protect, async (req, res, next) => {
       }));
     }
 
-    // Generate AI intelligence using Google Gemini (with deduplication lock)
-    const aiResults = await generateMeetingSummary(transcriptToUse, meeting.title, meeting._id.toString());
-    meeting.summary = aiResults.summary;
-    meeting.topicsCovered = aiResults.topicsCovered;
-    meeting.topicsBreakdown = aiResults.topicsBreakdown || [];
-    meeting.personWiseSummary = aiResults.personWiseSummary || [];
-    meeting.problemsIdentified = aiResults.problemsIdentified || [];
-    meeting.solutionsSuggested = aiResults.solutionsSuggested || [];
-    meeting.keyTakeaways = aiResults.keyTakeaways;
-    meeting.keyDecisions = aiResults.keyDecisions;
-    meeting.importantQuestions = aiResults.importantQuestions;
-    meeting.actionItems = aiResults.actionItems;
-
+    // Persist meeting data to MongoDB immediately so transcript is permanently preserved
     await meeting.save();
+
+    // Guarded AI Intelligence generation using Google Gemini & resilient fallback
+    try {
+      const aiResults = await generateMeetingSummary(transcriptToUse, meeting.title, meeting._id.toString());
+      if (aiResults) {
+        meeting.summary = aiResults.summary || meeting.summary;
+        meeting.topicsCovered = aiResults.topicsCovered || meeting.topicsCovered;
+        meeting.topicsBreakdown = aiResults.topicsBreakdown || meeting.topicsBreakdown || [];
+        meeting.personWiseSummary = aiResults.personWiseSummary || meeting.personWiseSummary || [];
+        meeting.problemsIdentified = aiResults.problemsIdentified || meeting.problemsIdentified || [];
+        meeting.solutionsSuggested = aiResults.solutionsSuggested || meeting.solutionsSuggested || [];
+        meeting.keyTakeaways = aiResults.keyTakeaways || meeting.keyTakeaways;
+        meeting.keyDecisions = aiResults.keyDecisions || meeting.keyDecisions;
+        meeting.importantQuestions = aiResults.importantQuestions || meeting.importantQuestions;
+        meeting.actionItems = aiResults.actionItems || meeting.actionItems;
+        await meeting.save();
+      }
+    } catch (aiErr) {
+      console.warn('[MeetingRoutes] generateMeetingSummary notice:', aiErr.message);
+    }
 
     res.json({
       success: true,
@@ -227,9 +253,11 @@ router.post('/:id/end', protect, async (req, res, next) => {
 // Manually trigger or re-generate AI intelligence for a meeting
 router.post('/:id/ai-intelligence', protect, async (req, res, next) => {
   try {
-    const cleanId = (req.params.id || '').trim();
+    const cleanId = extractCleanId(req.params.id);
     const isObjectId = /^[0-9a-fA-F]{24}$/.test(cleanId);
-    const query = isObjectId ? { $or: [{ _id: cleanId }, { code: cleanId }] } : { code: cleanId };
+    const query = isObjectId 
+      ? { $or: [{ _id: cleanId }, { code: { $regex: new RegExp(`^${cleanId}$`, 'i') } }] } 
+      : { code: { $regex: new RegExp(`^${cleanId}$`, 'i') } };
     let meeting = await Meeting.findOne(query);
 
     if (!meeting) {
@@ -265,21 +293,27 @@ router.post('/:id/ai-intelligence', protect, async (req, res, next) => {
         return true;
       });
       targetTranscript = meeting.transcript;
+      await meeting.save();
     }
 
-    const aiResults = await generateMeetingSummary(targetTranscript, meeting.title, meeting._id.toString());
-    meeting.summary = aiResults.summary;
-    meeting.topicsCovered = aiResults.topicsCovered;
-    meeting.topicsBreakdown = aiResults.topicsBreakdown || [];
-    meeting.personWiseSummary = aiResults.personWiseSummary || [];
-    meeting.problemsIdentified = aiResults.problemsIdentified || [];
-    meeting.solutionsSuggested = aiResults.solutionsSuggested || [];
-    meeting.keyTakeaways = aiResults.keyTakeaways;
-    meeting.keyDecisions = aiResults.keyDecisions;
-    meeting.importantQuestions = aiResults.importantQuestions;
-    meeting.actionItems = aiResults.actionItems;
-
-    await meeting.save();
+    try {
+      const aiResults = await generateMeetingSummary(targetTranscript, meeting.title, meeting._id.toString());
+      if (aiResults) {
+        meeting.summary = aiResults.summary || meeting.summary;
+        meeting.topicsCovered = aiResults.topicsCovered || meeting.topicsCovered;
+        meeting.topicsBreakdown = aiResults.topicsBreakdown || meeting.topicsBreakdown || [];
+        meeting.personWiseSummary = aiResults.personWiseSummary || meeting.personWiseSummary || [];
+        meeting.problemsIdentified = aiResults.problemsIdentified || meeting.problemsIdentified || [];
+        meeting.solutionsSuggested = aiResults.solutionsSuggested || meeting.solutionsSuggested || [];
+        meeting.keyTakeaways = aiResults.keyTakeaways || meeting.keyTakeaways;
+        meeting.keyDecisions = aiResults.keyDecisions || meeting.keyDecisions;
+        meeting.importantQuestions = aiResults.importantQuestions || meeting.importantQuestions;
+        meeting.actionItems = aiResults.actionItems || meeting.actionItems;
+        await meeting.save();
+      }
+    } catch (aiErr) {
+      console.warn('[MeetingRoutes] AI generation warning:', aiErr.message);
+    }
 
     res.json({
       success: true,
@@ -304,9 +338,11 @@ router.post('/:id/ai-intelligence', protect, async (req, res, next) => {
 // Convert Action Item to Kanban Task
 router.post('/:id/action-items/:itemId/task', protect, async (req, res, next) => {
   try {
-    const cleanId = (req.params.id || '').trim();
+    const cleanId = extractCleanId(req.params.id);
     const isObjectId = /^[0-9a-fA-F]{24}$/.test(cleanId);
-    const query = isObjectId ? { $or: [{ _id: cleanId }, { code: cleanId }] } : { code: cleanId };
+    const query = isObjectId 
+      ? { $or: [{ _id: cleanId }, { code: { $regex: new RegExp(`^${cleanId}$`, 'i') } }] } 
+      : { code: { $regex: new RegExp(`^${cleanId}$`, 'i') } };
     const meeting = await Meeting.findOne(query);
     if (!meeting) {
       return res.status(404).json({ success: false, message: 'Meeting not found' });
@@ -351,9 +387,11 @@ router.post('/:id/action-items/:itemId/task', protect, async (req, res, next) =>
 // Save Meeting Recording URL and Status
 router.post('/:id/recording', protect, async (req, res, next) => {
   try {
-    const cleanId = (req.params.id || '').trim();
+    const cleanId = extractCleanId(req.params.id);
     const isObjectId = /^[0-9a-fA-F]{24}$/.test(cleanId);
-    const query = isObjectId ? { $or: [{ _id: cleanId }, { code: cleanId }] } : { code: cleanId };
+    const query = isObjectId 
+      ? { $or: [{ _id: cleanId }, { code: { $regex: new RegExp(`^${cleanId}$`, 'i') } }] } 
+      : { code: { $regex: new RegExp(`^${cleanId}$`, 'i') } };
     const meeting = await Meeting.findOne(query);
 
     if (!meeting) {

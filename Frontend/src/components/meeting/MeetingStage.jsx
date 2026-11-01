@@ -73,6 +73,8 @@ export const MeetingStage = ({
     ? (screenShareStream || localStream)
     : (presenterSocketId ? remoteStreams[presenterSocketId] : null);
 
+  const hasPresenterVideo = Boolean(presenterStream && presenterStream.getVideoTracks && presenterStream.getVideoTracks().length > 0);
+
   // Clear pin if pinned peer left the room
   useEffect(() => {
     if (pinnedSocketId && pinnedSocketId !== 'local') {
@@ -146,7 +148,7 @@ export const MeetingStage = ({
           justifyContent: 'center',
           boxShadow: '0 12px 32px rgba(0, 0, 0, 0.7)'
         }}>
-          {presenterStream ? (
+          {hasPresenterVideo ? (
             <video
               key={`presenter-${presenterSocketId || 'screen'}`}
               ref={(el) => {
