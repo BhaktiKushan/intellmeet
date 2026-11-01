@@ -60,6 +60,20 @@ export const MeetingStage = ({
     isSpeaking: activeSpeakerId === 'local'
   }), [currentUserId, localUser, isHost, isAudioMuted, isVideoOff, isHandRaised, activeSpeakerId]);
 
+  // Maintain a strictly stable participant grid:
+  // - Local participant is always fixed at position 0.
+  // - Remote participants maintain fixed positions throughout the meeting.
+  // - Tiles are NEVER reordered when someone speaks, preventing flickering or video stream swapping.
+  // - The active speaker is clearly highlighted with a glowing border/ring without moving their tile.
+  const stableParticipants = useMemo(() => {
+    const stableRemotes = [...remoteParticipants].sort((a, b) => {
+      const idA = a.socketId || a.id || '';
+      const idB = b.socketId || b.id || '';
+      return idA.localeCompare(idB);
+    });
+    return [localParticipantObj, ...stableRemotes];
+  }, [localParticipantObj, remoteParticipants]);
+
   // Determine if there is an active presentation
   const isSomeoneSharingScreen = isScreenSharing || !!presenter;
   const isPresenterLocal = isScreenSharing;
@@ -152,10 +166,9 @@ export const MeetingStage = ({
   // Filmstrip participants
   const getFilmstripParticipants = () => {
     if (isSomeoneSharingScreen) {
-      return [localParticipantObj, ...remoteParticipants];
+      return stableParticipants;
     } else if (pinnedSocketId) {
-      const all = [localParticipantObj, ...remoteParticipants];
-      return all.filter(p => p.socketId !== pinnedSocketId);
+      return stableParticipants.filter(p => p.socketId !== pinnedSocketId);
     }
     return [];
   };
@@ -353,20 +366,6 @@ export const MeetingStage = ({
   // ----------------------------------------------------
   // SCENARIO 2: INTELLIGENT ADAPTIVE GRID LAYOUT (1 to 16+ Participants)
   // ----------------------------------------------------
-  // Maintain a strictly stable participant grid:
-  // - Local participant is always fixed at position 0.
-  // - Remote participants maintain fixed positions throughout the meeting.
-  // - Tiles are NEVER reordered when someone speaks, preventing flickering or video stream swapping.
-  // - The active speaker is clearly highlighted with a glowing border/ring without moving their tile.
-  const stableParticipants = useMemo(() => {
-    const stableRemotes = [...remoteParticipants].sort((a, b) => {
-      const idA = a.socketId || a.id || '';
-      const idB = b.socketId || b.id || '';
-      return idA.localeCompare(idB);
-    });
-    return [localParticipantObj, ...stableRemotes];
-  }, [localParticipantObj, remoteParticipants]);
-
   const count = stableParticipants.length;
 
   // Calculate dynamic responsive grid configuration based on participant count & orientation
