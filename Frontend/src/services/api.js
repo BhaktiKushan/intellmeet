@@ -2,8 +2,13 @@ const rawBackend = import.meta.env.VITE_BACKEND_URL || '';
 const BACKEND_URL = rawBackend.trim().replace(/\/$/, '');
 const API_BASE = BACKEND_URL ? `${BACKEND_URL}/api` : '/api';
 
+export const getAuthToken = () => {
+  if (typeof window === 'undefined') return null;
+  return sessionStorage.getItem('intellmeet_token') || localStorage.getItem('intellmeet_token');
+};
+
 const getHeaders = () => {
-  const token = localStorage.getItem('intellmeet_token');
+  const token = getAuthToken();
   const headers = {
     'Content-Type': 'application/json'
   };
@@ -124,12 +129,22 @@ export const api = {
     return handleResponse(res);
   },
 
-  // AI Translation
-  translateText: async (text, targetLanguage, sourceLanguage = 'auto') => {
-    const res = await fetch(`${API_BASE}/ai/translate`, {
+  // In-Meeting Real-time AI Assistant
+  askAiAssistant: async (data) => {
+    const res = await fetch(`${API_BASE}/ai/ask-assistant`, {
       method: 'POST',
       headers: getHeaders(),
-      body: JSON.stringify({ text, targetLanguage, sourceLanguage })
+      body: JSON.stringify(data)
+    });
+    return handleResponse(res);
+  },
+
+  // Transcribe Audio Slice (Mobile & Non-WebSpeech Fallback)
+  transcribeAudioSlice: async (audioBase64, mimeType = 'audio/webm') => {
+    const res = await fetch(`${API_BASE}/ai/transcribe-slice`, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ audioBase64, mimeType })
     });
     return handleResponse(res);
   },

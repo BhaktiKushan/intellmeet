@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   X,
   MessageSquare,
@@ -11,7 +11,6 @@ import {
   VideoOff,
   UserX,
   Shield,
-  ShieldAlert,
   Search,
   Lock,
   Unlock,
@@ -19,7 +18,13 @@ import {
   Copy,
   Info,
   Sparkles,
-  Globe
+  Bot,
+  CornerDownLeft,
+  Loader2,
+  FileText,
+  ListTodo,
+  CheckCircle2,
+  Lightbulb
 } from 'lucide-react';
 
 export const MeetingSideDrawer = ({
@@ -41,16 +46,26 @@ export const MeetingSideDrawer = ({
   onUpdateNotes,
   roomId,
   meeting,
-  transcriptLog = [],
-  interimTranscript = null,
-  targetLanguage = 'none',
-  onSelectTargetLanguage
+  liveTopic = null,
+  aiAssistantChat = [],
+  onAskAssistant,
+  isAiThinking = false
 }) => {
   const [chatInput, setChatInput] = useState('');
+  const [assistantInput, setAssistantInput] = useState('');
   const [participantSearch, setParticipantSearch] = useState('');
-  const [transcriptSearch, setTranscriptSearch] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
-  const [copiedTranscript, setCopiedTranscript] = useState(false);
+  const [isVoiceListening, setIsVoiceListening] = useState(false);
+
+  const assistantEndRef = useRef(null);
+  const voiceRecognitionRef = useRef(null);
+
+  // Auto-scroll AI assistant conversation on new messages
+  useEffect(() => {
+    if (activeTab === 'assistant' && assistantEndRef.current) {
+      assistantEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [aiAssistantChat, activeTab, isAiThinking]);
 
   if (!activeTab) return null;
 
@@ -61,27 +76,65 @@ export const MeetingSideDrawer = ({
     setChatInput('');
   };
 
+  const handleAssistantSubmit = (e) => {
+    if (e) e.preventDefault();
+    if (!assistantInput.trim() || isAiThinking) return;
+    onAskAssistant?.(assistantInput.trim());
+    setAssistantInput('');
+  };
+
+  const handleQuickPrompt = (promptText) => {
+    if (isAiThinking) return;
+    onAskAssistant?.(promptText);
+  };
+
+  // Quick Voice Query for AI Assistant (Laptop & Mobile)
+  const toggleVoiceQuery = () => {
+    if (isVoiceListening) {
+      if (voiceRecognitionRef.current) {
+        try { voiceRecognitionRef.current.stop(); } catch (e) {}
+      }
+      setIsVoiceListening(false);
+      return;
+    }
+
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRec) {
+      alert('Speech recognition is not supported in this browser. Please type your query in the input box.');
+      return;
+    }
+
+    try {
+      const rec = new SpeechRec();
+      rec.continuous = false;
+      rec.interimResults = false;
+      rec.lang = 'en-US';
+
+      rec.onstart = () => setIsVoiceListening(true);
+      rec.onresult = (evt) => {
+        const spoken = evt.results?.[0]?.[0]?.transcript || '';
+        if (spoken.trim()) {
+          setAssistantInput(spoken.trim());
+          onAskAssistant?.(spoken.trim());
+        }
+      };
+      rec.onerror = () => setIsVoiceListening(false);
+      rec.onend = () => setIsVoiceListening(false);
+
+      voiceRecognitionRef.current = rec;
+      rec.start();
+    } catch (e) {
+      setIsVoiceListening(false);
+    }
+  };
+
   const copyRoomLink = () => {
     navigator.clipboard.writeText(window.location.href);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  const copyFullTranscript = () => {
-    if (!transcriptLog || transcriptLog.length === 0) return;
-    const formatted = transcriptLog.map(t => {
-      let turn = `[${t.timestamp || '00:00'}] ${t.speaker || 'Participant'}: ${t.text}`;
-      if (t.translation) {
-        turn += `\n  🌐 (${(t.targetLanguage || 'Translated').toUpperCase()}): ${t.translation}`;
-      }
-      return turn;
-    }).join('\n\n');
-    navigator.clipboard.writeText(formatted);
-    setCopiedTranscript(true);
-    setTimeout(() => setCopiedTranscript(false), 2000);
-  };
-
-  // Filter participants
+  // Assemble full participant list including local user
   const allParticipants = [
     {
       socketId: 'local',
@@ -103,7 +156,8 @@ export const MeetingSideDrawer = ({
     <aside
       className="meeting-side-drawer glass-panel"
       style={{
-        width: '360px',
+        width: '380px',
+        maxWidth: '100vw',
         height: '100%',
         borderRadius: 0,
         borderLeft: '1px solid var(--border-subtle)',
@@ -113,7 +167,7 @@ export const MeetingSideDrawer = ({
         display: 'flex',
         flexDirection: 'column',
         zIndex: 35,
-        background: 'rgba(10, 15, 26, 0.96)',
+        background: 'rgba(10, 15, 26, 0.98)',
         backdropFilter: 'blur(24px)'
       }}
     >
@@ -126,15 +180,15 @@ export const MeetingSideDrawer = ({
         justifyContent: 'space-between'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {activeTab === 'assistant' && <Sparkles size={18} color="#c084fc" />}
           {activeTab === 'chat' && <MessageSquare size={18} color="#818cf8" />}
           {activeTab === 'participants' && <Users size={18} color="#818cf8" />}
-          {activeTab === 'transcript' && <Sparkles size={18} color="#818cf8" />}
           {activeTab === 'notes' && <Edit3 size={18} color="#818cf8" />}
           {activeTab === 'info' && <Info size={18} color="#818cf8" />}
-          <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#ffffff' }}>
+          <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#ffffff', margin: 0 }}>
+            {activeTab === 'assistant' && 'AI Meeting Assistant'}
             {activeTab === 'chat' && 'In-Meeting Chat'}
             {activeTab === 'participants' && `Participants (${allParticipants.length})`}
-            {activeTab === 'transcript' && 'Live AI Transcript & Translation'}
             {activeTab === 'notes' && 'Shared Collaborative Notes'}
             {activeTab === 'info' && 'Meeting Information'}
           </h3>
@@ -156,6 +210,222 @@ export const MeetingSideDrawer = ({
           <X size={18} />
         </button>
       </div>
+
+      {/* ---------------- IN-MEETING AI ASSISTANT TAB ---------------- */}
+      {activeTab === 'assistant' && (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {/* Active Live Topic Card */}
+          {liveTopic && liveTopic.topic && (
+            <div style={{
+              margin: '12px 14px 6px',
+              padding: '12px 14px',
+              background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%)',
+              border: '1px solid rgba(168, 85, 247, 0.35)',
+              borderRadius: '12px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                <span style={{ fontSize: '0.65rem', background: '#6366f1', color: '#fff', padding: '1px 6px', borderRadius: '4px', fontWeight: 800, textTransform: 'uppercase' }}>
+                  Live Topic
+                </span>
+                <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#fff' }}>
+                  {liveTopic.topic}
+                </span>
+              </div>
+              {liveTopic.summary && (
+                <p style={{ fontSize: '0.78rem', color: '#cbd5e1', margin: 0, lineHeight: 1.35 }}>
+                  {liveTopic.summary}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Quick Prompt Suggestions */}
+          <div style={{
+            padding: '8px 14px 10px',
+            display: 'flex',
+            gap: '6px',
+            overflowX: 'auto',
+            borderBottom: '1px solid rgba(255, 255, 255, 0.06)'
+          }}>
+            <button
+              onClick={() => handleQuickPrompt('Summarize the meeting discussion so far in concise bullet points')}
+              className="btn btn-secondary"
+              style={{ padding: '4px 10px', fontSize: '0.74rem', whiteSpace: 'nowrap', borderRadius: '16px', gap: '4px' }}
+            >
+              <FileText size={12} color="#818cf8" />
+              <span>Summarize So Far</span>
+            </button>
+            <button
+              onClick={() => handleQuickPrompt('What are the key action items and deliverables discussed?')}
+              className="btn btn-secondary"
+              style={{ padding: '4px 10px', fontSize: '0.74rem', whiteSpace: 'nowrap', borderRadius: '16px', gap: '4px' }}
+            >
+              <ListTodo size={12} color="#34d399" />
+              <span>Action Items</span>
+            </button>
+            <button
+              onClick={() => handleQuickPrompt('What important decisions have been made in this meeting?')}
+              className="btn btn-secondary"
+              style={{ padding: '4px 10px', fontSize: '0.74rem', whiteSpace: 'nowrap', borderRadius: '16px', gap: '4px' }}
+            >
+              <CheckCircle2 size={12} color="#f59e0b" />
+              <span>Decisions</span>
+            </button>
+          </div>
+
+          {/* AI Assistant Chat Stream */}
+          <div style={{
+            flex: 1,
+            padding: '14px',
+            overflowY: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '12px'
+          }}>
+            {/* System Intro Message */}
+            <div style={{
+              display: 'flex',
+              gap: '10px',
+              padding: '12px',
+              background: 'rgba(255, 255, 255, 0.03)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: '12px'
+            }}>
+              <div style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '50%',
+                background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 100%)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}>
+                <Bot size={18} color="#ffffff" />
+              </div>
+              <div style={{ fontSize: '0.82rem', color: '#cbd5e1', lineHeight: 1.45 }}>
+                <strong style={{ color: '#ffffff', display: 'block', marginBottom: '2px' }}>
+                  IntellMeet AI Assistant
+                </strong>
+                I am listening to your meeting in English. Ask me to summarize key points, track tasks, or clarify any topic anytime!
+              </div>
+            </div>
+
+            {/* Conversation turns */}
+            {aiAssistantChat.map((turn, i) => (
+              <div key={turn.id || i} style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                {turn.question && (
+                  <div style={{
+                    alignSelf: 'flex-end',
+                    background: 'linear-gradient(135deg, #6366f1 0%, #7c3aed 100%)',
+                    color: '#ffffff',
+                    padding: '8px 12px',
+                    borderRadius: '12px 12px 2px 12px',
+                    fontSize: '0.85rem',
+                    maxWidth: '88%',
+                    lineHeight: 1.4
+                  }}>
+                    {turn.question}
+                  </div>
+                )}
+                {turn.answer && (
+                  <div style={{
+                    alignSelf: 'flex-start',
+                    background: 'rgba(255, 255, 255, 0.04)',
+                    border: '1px solid var(--border-subtle)',
+                    color: '#f8fafc',
+                    padding: '10px 12px',
+                    borderRadius: '12px 12px 12px 2px',
+                    fontSize: '0.84rem',
+                    maxWidth: '94%',
+                    lineHeight: 1.5,
+                    whiteSpace: 'pre-wrap'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+                      <Sparkles size={13} color="#c084fc" />
+                      <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#c084fc' }}>
+                        IntellMeet AI
+                      </span>
+                    </div>
+                    {turn.answer}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {/* In-Flight Thinking Indicator */}
+            {isAiThinking && (
+              <div style={{
+                alignSelf: 'flex-start',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '8px 12px',
+                background: 'rgba(99, 102, 241, 0.1)',
+                border: '1px solid rgba(99, 102, 241, 0.3)',
+                borderRadius: '12px',
+                color: '#c7d2fe',
+                fontSize: '0.8rem'
+              }}>
+                <Loader2 size={14} className="animate-spin" color="#818cf8" />
+                <span>IntellMeet AI is analyzing the meeting...</span>
+              </div>
+            )}
+
+            <div ref={assistantEndRef} />
+          </div>
+
+          {/* Assistant Input Dock */}
+          <form
+            onSubmit={handleAssistantSubmit}
+            style={{
+              padding: '12px 14px',
+              borderTop: '1px solid var(--border-subtle)',
+              background: 'rgba(8, 12, 20, 0.75)',
+              display: 'flex',
+              gap: '6px',
+              alignItems: 'center'
+            }}
+          >
+            <input
+              type="text"
+              placeholder={isVoiceListening ? 'Listening to your voice...' : 'Ask AI Assistant about this meeting...'}
+              value={assistantInput}
+              onChange={(e) => setAssistantInput(e.target.value)}
+              disabled={isAiThinking}
+              className="input-field"
+              style={{
+                flex: 1,
+                padding: '8px 12px',
+                fontSize: '0.84rem',
+                borderColor: isVoiceListening ? '#ec4899' : undefined
+              }}
+            />
+
+            {/* Voice Input Button */}
+            <button
+              type="button"
+              onClick={toggleVoiceQuery}
+              className={`control-btn ${isVoiceListening ? 'control-btn-danger' : 'control-btn-active'}`}
+              style={{ width: '38px', height: '38px', borderRadius: '10px', padding: 0 }}
+              title={isVoiceListening ? 'Stop listening' : 'Ask by voice'}
+            >
+              {isVoiceListening ? <MicOff size={16} /> : <Mic size={16} />}
+            </button>
+
+            {/* Send Button */}
+            <button
+              type="submit"
+              disabled={!assistantInput.trim() || isAiThinking}
+              className="btn btn-primary"
+              style={{ width: '38px', height: '38px', borderRadius: '10px', padding: 0 }}
+              title="Submit query"
+            >
+              <Send size={15} />
+            </button>
+          </form>
+        </div>
+      )}
 
       {/* ---------------- CHAT TAB ---------------- */}
       {activeTab === 'chat' && (
@@ -406,174 +676,6 @@ export const MeetingSideDrawer = ({
         </div>
       )}
 
-      {/* ---------------- TRANSCRIPT & TRANSLATION TAB ---------------- */}
-      {activeTab === 'transcript' && (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {/* Controls Bar: Target Language + Search */}
-          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-subtle)', background: 'rgba(15, 23, 42, 0.4)', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#a5b4fc', fontWeight: 600 }}>
-                <Globe size={15} color="#818cf8" />
-                <span>Live AI Translation:</span>
-              </div>
-              <select
-                value={targetLanguage}
-                onChange={(e) => onSelectTargetLanguage?.(e.target.value)}
-                style={{
-                  background: 'rgba(255, 255, 255, 0.08)',
-                  color: '#ffffff',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: '6px',
-                  padding: '4px 8px',
-                  fontSize: '0.78rem',
-                  outline: 'none',
-                  cursor: 'pointer'
-                }}
-              >
-                <option value="none">Off (Original Audio)</option>
-                <option value="hi">Hindi (हिन्दी)</option>
-                <option value="es">Spanish (Español)</option>
-                <option value="fr">French (Français)</option>
-                <option value="de">German (Deutsch)</option>
-                <option value="ja">Japanese (日本語)</option>
-                <option value="zh">Chinese (中文)</option>
-                <option value="ar">Arabic (العربية)</option>
-                <option value="pt">Portuguese (Português)</option>
-                <option value="ru">Russian (Русский)</option>
-                <option value="it">Italian (Italiano)</option>
-                <option value="bn">Bengali (বাংলা)</option>
-              </select>
-            </div>
-
-            <div style={{ position: 'relative' }}>
-              <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-dim)' }} />
-              <input
-                type="text"
-                value={transcriptSearch}
-                onChange={(e) => setTranscriptSearch(e.target.value)}
-                placeholder="Search spoken turns..."
-                style={{
-                  width: '100%',
-                  padding: '6px 10px 6px 30px',
-                  borderRadius: '6px',
-                  border: '1px solid var(--border-subtle)',
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  color: '#ffffff',
-                  fontSize: '0.8rem',
-                  outline: 'none'
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Transcript Turns List */}
-          <div style={{
-            flex: 1,
-            padding: '16px',
-            overflowY: 'auto',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '12px'
-          }}>
-            {transcriptLog.length === 0 && !interimTranscript ? (
-              <div style={{ textAlign: 'center', margin: 'auto', color: 'var(--text-dim)', padding: '24px' }}>
-                <Sparkles size={28} color="#818cf8" style={{ marginBottom: '8px', opacity: 0.8 }} />
-                <p style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-muted)' }}>
-                  Listening for meeting speech...
-                </p>
-                <p style={{ fontSize: '0.78rem', marginTop: '6px' }}>
-                  Speak through your microphone to see continuous real-time transcription and multilingual AI translation.
-                </p>
-              </div>
-            ) : (
-              <>
-                {transcriptLog
-                  .filter(t => !transcriptSearch || (t.text || '').toLowerCase().includes(transcriptSearch.toLowerCase()) || (t.translation || '').toLowerCase().includes(transcriptSearch.toLowerCase()) || (t.speaker || '').toLowerCase().includes(transcriptSearch.toLowerCase()))
-                  .map((turn, idx) => (
-                    <div
-                      key={turn.segmentId || idx}
-                      style={{
-                        background: 'rgba(255, 255, 255, 0.03)',
-                        border: '1px solid var(--border-subtle)',
-                        borderRadius: '10px',
-                        padding: '10px 12px'
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
-                        <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#818cf8' }}>
-                          {turn.speaker || 'Unknown Speaker'}
-                        </span>
-                        <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>
-                          {turn.timestamp || '00:00'}
-                        </span>
-                      </div>
-
-                      <div style={{ fontSize: '0.84rem', color: '#f8fafc', lineHeight: 1.4 }}>
-                        "{turn.text}"
-                      </div>
-
-                      {turn.translation && (
-                        <div style={{
-                          marginTop: '6px',
-                          paddingTop: '6px',
-                          borderTop: '1px solid rgba(255, 255, 255, 0.06)',
-                          fontSize: '0.82rem',
-                          color: '#38bdf8',
-                          lineHeight: 1.4
-                        }}>
-                          <span style={{ fontSize: '0.68rem', background: 'rgba(56, 189, 248, 0.15)', color: '#7dd3fc', padding: '1px 5px', borderRadius: '3px', marginRight: '6px', fontWeight: 700 }}>
-                            {(turn.targetLanguage || targetLanguage).toUpperCase()}
-                          </span>
-                          {turn.translation}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-
-                {/* Interim Live Updating Sentence */}
-                {interimTranscript && interimTranscript.text && (
-                  <div
-                    style={{
-                      background: 'rgba(99, 102, 241, 0.08)',
-                      border: '1px dashed rgba(99, 102, 241, 0.45)',
-                      borderRadius: '10px',
-                      padding: '10px 12px'
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
-                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#a5b4fc', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#818cf8', display: 'inline-block' }} />
-                        {interimTranscript.speaker || 'Unknown Speaker'} (speaking...)
-                      </span>
-                      <span style={{ fontSize: '0.7rem', color: 'var(--text-dim)' }}>
-                        Live
-                      </span>
-                    </div>
-                    <div style={{ fontSize: '0.84rem', color: '#cbd5e1', fontStyle: 'italic', lineHeight: 1.4 }}>
-                      "{interimTranscript.text}"
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* Transcript Bottom Action */}
-          {transcriptLog.length > 0 && (
-            <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-subtle)', background: 'rgba(10, 15, 26, 0.8)' }}>
-              <button
-                onClick={copyFullTranscript}
-                className="btn btn-secondary"
-                style={{ width: '100%', padding: '8px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
-              >
-                {copiedTranscript ? <Check size={14} color="#34d399" /> : <Copy size={14} />}
-                <span>{copiedTranscript ? 'Copied Full Transcript!' : 'Copy Entire Transcript'}</span>
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* ---------------- SHARED NOTES TAB ---------------- */}
       {activeTab === 'notes' && (
         <div style={{ flex: 1, padding: '16px', display: 'flex', flexDirection: 'column' }}>
@@ -649,3 +751,5 @@ export const MeetingSideDrawer = ({
     </aside>
   );
 };
+
+export default MeetingSideDrawer;

@@ -1,5 +1,5 @@
 import Meeting from '../models/Meeting.js';
-import { detectLiveTopic } from './aiService.js';
+import { detectLiveTopic, askAiAssistant, transcribeAudio } from './aiService.js';
 
 export const setupSocketIO = (io) => {
   // Store active rooms in-memory: roomId -> { users: Map, hostSocketId, presenter, settings, recording }
@@ -544,6 +544,79 @@ export const setupSocketIO = (io) => {
         }
       } catch (err) {
         console.warn('[Socket] Translation persistence notice:', err.message);
+      }
+    });
+
+    // Real-Time Mobile & Cross-Device Audio Speech Processing (Cross-Device AI Assistant)
+    socket.on('mobile-audio-speech', async ({ roomId, audioBase64, mimeType, speaker, userId }) => {
+      if (!audioBase64) return;
+      const room = rooms.get(roomId);
+      const sender = room?.users.get(socket.id);
+      if (sender) sender.isAudioMuted = false;
+
+      const verifiedSpeaker = sender?.name || speaker || 'Participant';
+      try {
+        const text = await transcribeAudio(audioBase64, mimeType);
+        if (text && text.trim().length > 1) {
+          const segmentId = `seg-mobile-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+          const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+          const transcriptItem = {
+            segmentId,
+            speaker: verifiedSpeaker,
+            userId: sender?.id || userId || null,
+            participantId: sender?.id || socket.id,
+            text: text.trim(),
+            timestamp,
+            isFinal: true
+          };
+
+          // Broadcast to all peers in the room
+          io.to(roomId).emit('transcript-update', transcriptItem);
+
+          // Update recent transcript for live topic detection & in-meeting AI assistant
+          if (room) {
+            room.recentTranscript = room.recentTranscript || [];
+            room.recentTranscript.push(transcriptItem);
+            if (room.recentTranscript.length > 25) room.recentTranscript.shift();
+
+            if (room.recentTranscript.length >= 3 && (room.recentTranscript.length % 2 === 1 || !room.currentTopic)) {
+              detectLiveTopic(room.recentTranscript, room.title || 'Team Meeting')
+                .then(topicData => {
+                  if (topicData && topicData.topic) {
+                    room.currentTopic = topicData;
+                    io.to(roomId).emit('topic-detected', topicData);
+                  }
+                })
+                .catch(err => console.warn('[Socket] Topic detection note:', err.message));
+            }
+          }
+
+          // Persist in MongoDB
+          await Meeting.findOneAndUpdate(
+            { code: roomId },
+            {
+              $push: { transcript: transcriptItem }
+            }
+          ).catch(err => console.warn('[Socket] Meeting transcript persist warning:', err.message));
+        }
+      } catch (err) {
+        console.warn('[Socket] Mobile audio speech error:', err.message);
+      }
+    });
+
+    // In-Meeting Real-time AI Assistant Query
+    socket.on('ask-ai-assistant', async ({ roomId, question }) => {
+      if (!question || !question.trim()) return;
+      const room = rooms.get(roomId);
+      try {
+        const answer = await askAiAssistant(question, {
+          transcript: room?.recentTranscript || [],
+          liveTopic: room?.currentTopic || null
+        }, room?.title || 'Team Meeting');
+        socket.emit('ai-assistant-response', { question, answer, timestamp: new Date().toISOString() });
+      } catch (err) {
+        socket.emit('ai-assistant-response', { question, answer: 'AI Assistant temporarily unavailable. Please try again.', error: true });
       }
     });
 

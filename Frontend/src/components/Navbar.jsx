@@ -7,10 +7,10 @@ import {
   BarChart3, 
   FileText, 
   LogOut, 
-  User as UserIcon, 
   ShieldCheck, 
   Menu, 
-  X 
+  X,
+  UserCheck
 } from 'lucide-react';
 
 export const Navbar = ({ activeTab, setActiveTab }) => {
@@ -25,6 +25,13 @@ export const Navbar = ({ activeTab, setActiveTab }) => {
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'docs', label: 'Project Docs', icon: FileText }
   ];
+
+  const handleNavClick = (tabId) => {
+    setActiveTab(tabId);
+    setMobileMenuOpen(false);
+  };
+
+  const userDisplayId = user?.userId || (user?._id ? `USR-${user._id.slice(-6).toUpperCase()}` : 'USR-ONLINE');
 
   return (
     <header style={{
@@ -42,7 +49,7 @@ export const Navbar = ({ activeTab, setActiveTab }) => {
     }}>
       {/* Brand Logo */}
       <div 
-        onClick={() => setActiveTab('dashboard')}
+        onClick={() => handleNavClick('dashboard')}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -89,7 +96,7 @@ export const Navbar = ({ activeTab, setActiveTab }) => {
             return (
               <button
                 key={item.id}
-                onClick={() => setActiveTab(item.id)}
+                onClick={() => handleNavClick(item.id)}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -115,7 +122,7 @@ export const Navbar = ({ activeTab, setActiveTab }) => {
         </nav>
       )}
 
-      {/* Right User Controls (Create Meeting removed from Navbar per Requirement) */}
+      {/* Right User Controls */}
       <div className="navbar-right-controls" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
         {isAuthenticated ? (
           <div style={{ position: 'relative' }}>
@@ -125,7 +132,7 @@ export const Navbar = ({ activeTab, setActiveTab }) => {
                 display: 'flex',
                 alignItems: 'center',
                 gap: '10px',
-                padding: '4px 10px 4px 4px',
+                padding: '4px 12px 4px 4px',
                 borderRadius: '30px',
                 background: 'rgba(255, 255, 255, 0.05)',
                 border: '1px solid var(--border-subtle)',
@@ -144,13 +151,13 @@ export const Navbar = ({ activeTab, setActiveTab }) => {
                   background: 'rgba(255, 255, 255, 0.1)'
                 }}
               />
-              <div className="navbar-profile-text" style={{ textAlign: 'left', marginRight: '4px' }}>
+              <div className="navbar-profile-text" style={{ textAlign: 'left' }}>
                 <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#fff', lineHeight: 1.2 }}>
                   {user?.name?.split(' ')[0]}
                 </div>
-                <div style={{ fontSize: '0.7rem', color: '#818cf8', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                  <ShieldCheck size={11} />
-                  {user?.role === 'admin' ? 'Admin' : 'Member'}
+                <div style={{ fontSize: '0.68rem', color: '#818cf8', display: 'flex', alignItems: 'center', gap: '3px', fontWeight: 700 }}>
+                  <UserCheck size={11} color="#34d399" />
+                  <span>{userDisplayId}</span>
                 </div>
               </div>
             </div>
@@ -163,23 +170,40 @@ export const Navbar = ({ activeTab, setActiveTab }) => {
                   position: 'absolute',
                   top: '46px',
                   right: 0,
-                  width: '240px',
-                  padding: '12px',
+                  width: '260px',
+                  padding: '14px',
                   zIndex: 100,
                   background: 'rgba(14, 21, 36, 0.98)',
                   boxShadow: '0 16px 40px -8px rgba(0, 0, 0, 0.6)'
                 }}
               >
                 <div style={{ paddingBottom: '10px', borderBottom: '1px solid var(--border-subtle)', marginBottom: '8px' }}>
-                  <p style={{ fontWeight: 600, fontSize: '0.9rem', color: '#fff' }}>{user?.name}</p>
-                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{user?.email}</p>
-                  <p style={{ fontSize: '0.72rem', color: '#818cf8', marginTop: '4px' }}>{user?.title || user?.department}</p>
+                  <p style={{ fontWeight: 700, fontSize: '0.92rem', color: '#fff', margin: 0 }}>{user?.name}</p>
+                  <div style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    background: 'rgba(99, 102, 241, 0.2)',
+                    padding: '2px 8px',
+                    borderRadius: '6px',
+                    marginTop: '4px',
+                    marginBottom: '4px'
+                  }}>
+                    <ShieldCheck size={12} color="#818cf8" />
+                    <span style={{ fontSize: '0.72rem', color: '#c7d2fe', fontWeight: 700 }}>
+                      ID: {userDisplayId}
+                    </span>
+                  </div>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: 0 }}>{user?.email}</p>
+                  <p style={{ fontSize: '0.72rem', color: '#818cf8', marginTop: '2px', margin: 0 }}>
+                    {user?.title || user?.department} • {user?.role === 'admin' ? 'Admin' : 'Member'}
+                  </p>
                 </div>
 
                 <button
                   onClick={() => {
                     setShowProfileMenu(false);
-                    setActiveTab('docs');
+                    handleNavClick('docs');
                   }}
                   style={{
                     width: '100%',
@@ -250,16 +274,24 @@ export const Navbar = ({ activeTab, setActiveTab }) => {
         <div className="navbar-mobile-drawer">
           {isAuthenticated && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px' }}>
+              <div style={{
+                padding: '8px 12px',
+                background: 'rgba(255, 255, 255, 0.04)',
+                borderRadius: '8px',
+                marginBottom: '8px',
+                fontSize: '0.78rem',
+                color: '#818cf8',
+                fontWeight: 600
+              }}>
+                User ID: {userDisplayId}
+              </div>
               {navItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = activeTab === item.id;
                 return (
                   <button
                     key={item.id}
-                    onClick={() => {
-                      setActiveTab(item.id);
-                      setMobileMenuOpen(false);
-                    }}
+                    onClick={() => handleNavClick(item.id)}
                     style={{
                       display: 'flex',
                       alignItems: 'center',

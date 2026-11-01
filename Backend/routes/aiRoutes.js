@@ -1,8 +1,42 @@
 import express from 'express';
-import { generateMeetingSummary, translateText, detectLiveTopic } from '../services/aiService.js';
+import { generateMeetingSummary, translateText, detectLiveTopic, askAiAssistant, transcribeAudio } from '../services/aiService.js';
 import { protect } from '../middleware/auth.js';
 
 const router = express.Router();
+
+// Real-time In-Meeting AI Assistant Query
+router.post('/ask-assistant', protect, async (req, res, next) => {
+  try {
+    const { question, transcript = [], liveTopic, title, notes } = req.body;
+    if (!question || !question.trim()) {
+      return res.status(400).json({ success: false, message: 'Question is required' });
+    }
+    const answer = await askAiAssistant(question, { transcript, liveTopic, notes }, title || 'Team Meeting');
+    res.json({
+      success: true,
+      data: { answer }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Transcribe Audio Slice (Mobile & Non-WebSpeech Fallback)
+router.post('/transcribe-slice', protect, async (req, res, next) => {
+  try {
+    const { audioBase64, mimeType } = req.body;
+    if (!audioBase64) {
+      return res.status(400).json({ success: false, message: 'audioBase64 is required' });
+    }
+    const text = await transcribeAudio(audioBase64, mimeType);
+    res.json({
+      success: true,
+      data: { text }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 // Real-time AI Live Topic Detection
 router.post('/detect-topic', protect, async (req, res, next) => {
@@ -18,7 +52,7 @@ router.post('/detect-topic', protect, async (req, res, next) => {
   }
 });
 
-// Real-time AI Speech Translation
+// Real-time AI Speech Translation (kept for backward compatibility)
 router.post('/translate', protect, async (req, res, next) => {
   try {
     const { text, targetLanguage, sourceLanguage } = req.body;

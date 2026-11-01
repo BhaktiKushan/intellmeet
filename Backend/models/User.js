@@ -8,6 +8,11 @@ const userSchema = new mongoose.Schema(
       required: [true, 'Please provide a name'],
       trim: true
     },
+    userId: {
+      type: String,
+      unique: true,
+      sparse: true
+    },
     email: {
       type: String,
       required: [true, 'Please provide an email'],
@@ -53,8 +58,11 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// Hash password before saving
+// Assign unique user ID and hash password before saving
 userSchema.pre('save', async function (next) {
+  if (!this.userId) {
+    this.userId = 'USR-' + Math.floor(100000 + Math.random() * 900000);
+  }
   if (!this.isModified('password')) {
     return next();
   }

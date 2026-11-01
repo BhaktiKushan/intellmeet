@@ -29,11 +29,14 @@ router.post('/register', async (req, res, next) => {
     });
 
     const { accessToken, refreshToken } = generateTokens(user._id);
+    const sessionId = `sess_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 9)}`;
 
     res.status(201).json({
       success: true,
       data: {
         _id: user._id,
+        userId: user.userId || `USR-${user._id.toString().slice(-6).toUpperCase()}`,
+        sessionId,
         name: user.name,
         email: user.email,
         role: user.role,
@@ -63,12 +66,20 @@ router.post('/login', async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
+    if (!user.userId) {
+      user.userId = `USR-${user._id.toString().slice(-6).toUpperCase()}`;
+      await user.save().catch(() => {});
+    }
+
     const { accessToken, refreshToken } = generateTokens(user._id);
+    const sessionId = `sess_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 9)}`;
 
     res.json({
       success: true,
       data: {
         _id: user._id,
+        userId: user.userId,
+        sessionId,
         name: user.name,
         email: user.email,
         role: user.role,
@@ -106,13 +117,21 @@ router.post('/demo-login', async (req, res, next) => {
       });
     }
 
+    if (!user.userId) {
+      user.userId = `USR-${user._id.toString().slice(-6).toUpperCase()}`;
+      await user.save().catch(() => {});
+    }
+
     const { accessToken, refreshToken } = generateTokens(user._id);
+    const sessionId = `sess_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 9)}`;
 
     res.json({
       success: true,
       message: `Demo logged in as ${user.name}`,
       data: {
         _id: user._id,
+        userId: user.userId,
+        sessionId,
         name: user.name,
         email: user.email,
         role: user.role,
@@ -130,9 +149,14 @@ router.post('/demo-login', async (req, res, next) => {
 
 // Get Current Profile
 router.get('/me', protect, async (req, res) => {
+  const userData = req.user.toObject ? req.user.toObject() : { ...req.user };
+  if (!userData.userId && userData._id) {
+    userData.userId = `USR-${userData._id.toString().slice(-6).toUpperCase()}`;
+    await User.findByIdAndUpdate(userData._id, { userId: userData.userId }).catch(() => {});
+  }
   res.json({
     success: true,
-    data: req.user
+    data: userData
   });
 });
 

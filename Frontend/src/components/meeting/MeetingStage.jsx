@@ -1,16 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { ParticipantTile } from './ParticipantTile.jsx';
 import {
   Monitor,
   Maximize2,
   Minimize2,
-  Grid,
-  Square,
-  Shield,
-  Radio,
   ChevronLeft,
-  ChevronRight,
-  Users
+  ChevronRight
 } from 'lucide-react';
 
 export const MeetingStage = ({
@@ -39,7 +34,7 @@ export const MeetingStage = ({
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 768);
   const [isPortrait, setIsPortrait] = useState(() => typeof window !== 'undefined' && window.innerHeight > window.innerWidth);
 
-  React.useEffect(() => {
+  useEffect(() => {
     const handleResize = () => {
       setIsMobile(window.innerWidth <= 768);
       setIsPortrait(window.innerHeight > window.innerWidth);
@@ -53,7 +48,7 @@ export const MeetingStage = ({
   }, []);
 
   // Assemble full participant list including local user
-  const localParticipantObj = {
+  const localParticipantObj = useMemo(() => ({
     socketId: 'local',
     id: currentUserId || 'local',
     name: localUser?.name || 'You',
@@ -63,7 +58,7 @@ export const MeetingStage = ({
     isVideoOff,
     isHandRaised,
     isSpeaking: activeSpeakerId === 'local'
-  };
+  }), [currentUserId, localUser, isHost, isAudioMuted, isVideoOff, isHandRaised, activeSpeakerId]);
 
   // Determine if there is an active presentation
   const isSomeoneSharingScreen = isScreenSharing || !!presenter;
@@ -78,8 +73,7 @@ export const MeetingStage = ({
     ? (screenShareStream || localStream)
     : remoteStreams[presenterSocketId];
 
-  // Determine which participant (if any) is spotlighted / staged:
-  // Priority: 1. Screen Sharing (Highest Priority) -> 2. User Pin -> 3. Grid
+  // Determine which participant (if any) is spotlighted / staged
   const isStageModeActive = layoutMode === 'stage' || isSomeoneSharingScreen || !!pinnedSocketId;
 
   const togglePin = (socketId) => {
@@ -111,13 +105,11 @@ export const MeetingStage = ({
     }
   };
 
-  // All participants except the one currently shown on the central stage
+  // Filmstrip participants
   const getFilmstripParticipants = () => {
     if (isSomeoneSharingScreen) {
-      // Show ALL participants in the filmstrip (local + remotes)
       return [localParticipantObj, ...remoteParticipants];
     } else if (pinnedSocketId) {
-      // Show everyone except the pinned one
       const all = [localParticipantObj, ...remoteParticipants];
       return all.filter(p => p.socketId !== pinnedSocketId);
     }
@@ -125,12 +117,10 @@ export const MeetingStage = ({
   };
 
   // ----------------------------------------------------
-  // SCENARIO 1: STAGE / PRESENTATION MODE (Screen Share or Pin)
+  // SCENARIO 1: STAGE / SPOTLIGHT / SCREEN SHARE MODE
   // ----------------------------------------------------
   if (isStageModeActive) {
     const filmstrip = getFilmstripParticipants();
-
-    // Determine what goes on the main stage
     let stageContent = null;
 
     if (isSomeoneSharingScreen) {
@@ -148,58 +138,50 @@ export const MeetingStage = ({
           justifyContent: 'center',
           boxShadow: '0 12px 32px rgba(0, 0, 0, 0.7)'
         }}>
-          {/* Main Stage Screen Video */}
-          <video
-            autoPlay
-            playsInline
-            muted={isPresenterLocal}
-            ref={(el) => {
-              if (el && presenterStream) {
-                if (el.srcObject !== presenterStream) {
+          {presenterStream ? (
+            <video
+              ref={(el) => {
+                if (el && el.srcObject !== presenterStream) {
                   el.srcObject = presenterStream;
+                  el.play().catch(() => {});
                 }
-                el.play().catch(() => {});
-              }
-            }}
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'contain',
-              background: '#040711'
-            }}
-          />
+              }}
+              autoPlay
+              playsInline
+              muted={isPresenterLocal}
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+                background: '#020409'
+              }}
+            />
+          ) : (
+            <div style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+              <Monitor size={48} color="#6366f1" style={{ marginBottom: '12px' }} />
+              <p>Connecting to {presenterName}'s screen share presentation...</p>
+            </div>
+          )}
 
-          {/* Presenter Indicator Header Overlay */}
+          {/* Presenter Name Pill */}
           <div style={{
             position: 'absolute',
-            top: '16px',
+            bottom: '16px',
             left: '16px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
             background: 'rgba(10, 15, 28, 0.85)',
             backdropFilter: 'blur(12px)',
-            border: '1px solid rgba(99, 102, 241, 0.35)',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
             borderRadius: '24px',
             padding: '6px 14px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
             color: '#ffffff',
-            fontSize: '0.86rem',
+            fontSize: '0.85rem',
             fontWeight: 600,
-            zIndex: 10,
-            boxShadow: '0 4px 14px rgba(0, 0, 0, 0.5)'
+            zIndex: 10
           }}>
-            <span style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: '24px',
-              height: '24px',
-              borderRadius: '50%',
-              background: 'rgba(99, 102, 241, 0.35)',
-              color: '#818cf8'
-            }}>
-              <Monitor size={14} />
-            </span>
+            <Monitor size={14} color="#818cf8" />
             <span>{presenterName} is presenting</span>
             {isPresenterLocal && (
               <span style={{
@@ -214,42 +196,9 @@ export const MeetingStage = ({
               </span>
             )}
           </div>
-
-          {/* Fullscreen & Stage Actions */}
-          <div style={{
-            position: 'absolute',
-            top: '16px',
-            right: '16px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            zIndex: 10
-          }}>
-            <button
-              onClick={toggleFullscreen}
-              style={{
-                background: 'rgba(10, 15, 28, 0.85)',
-                backdropFilter: 'blur(12px)',
-                border: '1px solid rgba(255, 255, 255, 0.1)',
-                color: '#ffffff',
-                width: '36px',
-                height: '36px',
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease'
-              }}
-              title={isFullscreen ? 'Exit Fullscreen' : 'View Fullscreen'}
-            >
-              {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-            </button>
-          </div>
         </div>
       );
     } else if (pinnedSocketId) {
-      // A specific participant is pinned to the stage
       const pinnedPeer = pinnedSocketId === 'local'
         ? localParticipantObj
         : remoteParticipants.find(p => p.socketId === pinnedSocketId);
@@ -270,7 +219,7 @@ export const MeetingStage = ({
             currentUserId={currentUserId}
             onHostMute={onHostMute}
             onHostKick={onHostKick}
-            aspectRatio="16/9"
+            aspectRatio="auto"
           />
         );
       }
@@ -283,17 +232,18 @@ export const MeetingStage = ({
         style={{
           flex: 1,
           display: 'flex',
+          flexDirection: isMobile ? 'column' : 'row',
           overflow: 'hidden',
-          padding: '12px',
-          gap: '12px',
+          padding: isMobile ? '8px' : '14px',
+          gap: isMobile ? '8px' : '14px',
           height: '100%',
           position: 'relative'
         }}
       >
-        {/* Main Center Stage (Largest Viewport for Screen Sharing) */}
+        {/* Main Center Stage */}
         <div style={{
           flex: 1,
-          height: '100%',
+          height: isMobile ? '70%' : '100%',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -308,12 +258,14 @@ export const MeetingStage = ({
           className="meeting-filmstrip"
           style={{
             display: 'flex',
-            flexDirection: 'column',
-            gap: '10px',
-            overflowY: 'auto',
-            paddingRight: '4px',
-            minWidth: '220px',
-            maxWidth: '260px'
+            flexDirection: isMobile ? 'row' : 'column',
+            gap: '8px',
+            overflowX: isMobile ? 'auto' : 'hidden',
+            overflowY: isMobile ? 'hidden' : 'auto',
+            paddingRight: isMobile ? '0' : '4px',
+            width: isMobile ? '100%' : '240px',
+            height: isMobile ? '30%' : '100%',
+            flexShrink: 0
           }}
         >
           {filmstrip.map((peer) => {
@@ -323,8 +275,9 @@ export const MeetingStage = ({
               <div
                 key={peer.socketId}
                 style={{
-                  width: '100%',
-                  aspectRatio: '16/9',
+                  width: isMobile ? '160px' : '100%',
+                  height: isMobile ? '100%' : 'auto',
+                  aspectRatio: isMobile ? 'auto' : '16/9',
                   flexShrink: 0,
                   borderRadius: '12px',
                   overflow: 'hidden'
@@ -340,7 +293,7 @@ export const MeetingStage = ({
                   currentUserId={currentUserId}
                   onHostMute={onHostMute}
                   onHostKick={onHostKick}
-                  aspectRatio="16/9"
+                  aspectRatio="auto"
                 />
               </div>
             );
@@ -351,16 +304,12 @@ export const MeetingStage = ({
   }
 
   // ----------------------------------------------------
-  // SCENARIO 2: INTELLIGENT BALANCED GRID LAYOUT (1 to 60+ Participants)
+  // SCENARIO 2: INTELLIGENT ADAPTIVE GRID LAYOUT (1 to 16+ Participants)
   // ----------------------------------------------------
-  const [currentPage, setCurrentPage] = useState(1);
-  const TILES_PER_PAGE = isMobile ? (isPortrait ? 4 : 4) : 9;
-
   // Sort participants with active speaker prioritization
   const sortedParticipants = useMemo(() => {
     const list = [localParticipantObj, ...remoteParticipants];
     return list.slice().sort((a, b) => {
-      // Keep local user or active speaker up front
       if (a.socketId === 'local') return -1;
       if (b.socketId === 'local') return 1;
       if (a.isSpeaking && !b.isSpeaking) return -1;
@@ -370,59 +319,66 @@ export const MeetingStage = ({
   }, [localParticipantObj, remoteParticipants, activeSpeakerId]);
 
   const count = sortedParticipants.length;
-  const totalPages = Math.ceil(count / TILES_PER_PAGE) || 1;
-  const safeCurrentPage = Math.min(currentPage, totalPages);
-  const startIndex = (safeCurrentPage - 1) * TILES_PER_PAGE;
-  const visibleParticipants = sortedParticipants.slice(startIndex, startIndex + TILES_PER_PAGE);
-  const visibleCount = visibleParticipants.length;
 
-  // Calculate dynamic responsive grid configuration for visible page
+  // Calculate dynamic responsive grid configuration based on participant count & orientation
   let gridColumns = '1fr';
-  let gridRows = 'none';
-  let maxWidth = '840px';
-  let tileAspectRatio = '16/9';
-  let tileMaxHeight = '44vh';
+  let gridRows = '1fr';
+  let maxWidth = '100%';
+  let maxHeight = '100%';
 
   if (isMobile && isPortrait) {
-    maxWidth = '100%';
-    if (visibleCount === 1) {
+    if (count === 1) {
       gridColumns = '1fr';
-      tileAspectRatio = 'auto';
-      tileMaxHeight = '100%';
-    } else if (visibleCount === 2) {
+      gridRows = '1fr';
+    } else if (count === 2) {
       gridColumns = '1fr';
       gridRows = '1fr 1fr';
-      tileAspectRatio = 'auto';
-      tileMaxHeight = 'calc(50vh - 54px)';
+    } else if (count === 3 || count === 4) {
+      gridColumns = 'repeat(2, 1fr)';
+      gridRows = 'repeat(2, 1fr)';
+    } else if (count === 5 || count === 6) {
+      gridColumns = 'repeat(2, 1fr)';
+      gridRows = 'repeat(3, 1fr)';
     } else {
-      // 3 or 4 participants
-      gridColumns = '1fr 1fr';
-      gridRows = '1fr 1fr';
-      tileAspectRatio = '4/3';
-      tileMaxHeight = 'calc(50vh - 54px)';
+      gridColumns = 'repeat(2, 1fr)';
+      gridRows = 'auto';
     }
   } else {
-    // Landscape or Desktop
-    if (visibleCount === 1) {
+    // Landscape or Desktop / Laptop
+    if (count === 1) {
       gridColumns = '1fr';
-      maxWidth = '960px';
-      tileMaxHeight = '72vh';
-    } else if (visibleCount === 2) {
+      gridRows = '1fr';
+      maxWidth = '980px';
+      maxHeight = '75vh';
+    } else if (count === 2) {
       gridColumns = 'repeat(2, 1fr)';
-      maxWidth = '1120px';
-      tileMaxHeight = '68vh';
-    } else if (visibleCount >= 3 && visibleCount <= 4) {
+      gridRows = '1fr';
+      maxWidth = '1240px';
+      maxHeight = '68vh';
+    } else if (count === 3) {
+      gridColumns = 'repeat(3, 1fr)';
+      gridRows = '1fr';
+      maxWidth = '1360px';
+      maxHeight = '56vh';
+    } else if (count === 4) {
       gridColumns = 'repeat(2, 1fr)';
-      maxWidth = '1160px';
-      tileMaxHeight = '44vh';
-    } else if (visibleCount >= 5 && visibleCount <= 6) {
+      gridRows = 'repeat(2, 1fr)';
+      maxWidth = '1200px';
+      maxHeight = '72vh';
+    } else if (count <= 6) {
       gridColumns = 'repeat(3, 1fr)';
-      maxWidth = '1280px';
-      tileMaxHeight = '44vh';
-    } else if (visibleCount > 6) {
-      gridColumns = 'repeat(3, 1fr)';
+      gridRows = 'repeat(2, 1fr)';
       maxWidth = '1380px';
-      tileMaxHeight = '32vh';
+      maxHeight = '72vh';
+    } else if (count <= 8) {
+      gridColumns = 'repeat(4, 1fr)';
+      gridRows = 'repeat(2, 1fr)';
+      maxWidth = '1480px';
+      maxHeight = '72vh';
+    } else {
+      gridColumns = 'repeat(4, 1fr)';
+      gridRows = 'auto';
+      maxWidth = '1540px';
     }
   }
 
@@ -431,17 +387,17 @@ export const MeetingStage = ({
       id="meeting-stage-container"
       style={{
         flex: 1,
+        width: '100%',
+        height: '100%',
         display: 'flex',
-        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
         padding: isMobile ? '8px' : '16px',
-        overflowY: 'auto',
-        height: '100%',
+        overflowY: count > 6 && isMobile ? 'auto' : 'hidden',
         position: 'relative'
       }}
     >
-      {/* Quick Fullscreen Toggle Button in Grid Mode */}
+      {/* Quick Fullscreen Toggle Button */}
       <button
         onClick={toggleFullscreen}
         style={{
@@ -466,94 +422,41 @@ export const MeetingStage = ({
         {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
       </button>
 
-      {/* Floating Pagination Pill for 20-60 Participants */}
-      {totalPages > 1 && (
-        <div
-          style={{
-            position: 'absolute',
-            top: '16px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            background: 'rgba(10, 15, 28, 0.92)',
-            backdropFilter: 'blur(20px)',
-            border: '1px solid rgba(99, 102, 241, 0.35)',
-            borderRadius: '24px',
-            padding: '4px 14px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px',
-            zIndex: 25,
-            boxShadow: 'var(--shadow-md)'
-          }}
-        >
-          <button
-            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-            disabled={safeCurrentPage === 1}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: safeCurrentPage === 1 ? 'var(--text-dim)' : '#ffffff',
-              cursor: safeCurrentPage === 1 ? 'not-allowed' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              padding: '2px'
-            }}
-            title="Previous Page"
-          >
-            <ChevronLeft size={16} />
-          </button>
-
-          <span style={{ fontSize: '0.78rem', color: '#c7d2fe', fontWeight: 600 }}>
-            Page {safeCurrentPage} of {totalPages} &nbsp;•&nbsp; {count} Participants
-          </span>
-
-          <button
-            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-            disabled={safeCurrentPage === totalPages}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              color: safeCurrentPage === totalPages ? 'var(--text-dim)' : '#ffffff',
-              cursor: safeCurrentPage === totalPages ? 'not-allowed' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              padding: '2px'
-            }}
-            title="Next Page"
-          >
-            <ChevronRight size={16} />
-          </button>
-        </div>
-      )}
-
+      {/* Dynamic Adaptive Video Grid Canvas */}
       <div
         className="meeting-grid-canvas"
         style={{
           width: '100%',
-          height: isMobile && isPortrait && visibleCount <= 4 ? '100%' : 'auto',
+          height: (count <= 6 || !isMobile) ? '100%' : 'auto',
           maxWidth,
+          maxHeight,
           display: 'grid',
           gridTemplateColumns: gridColumns,
           gridTemplateRows: gridRows,
           gap: isMobile ? '8px' : '14px',
-          alignItems: 'center',
+          alignItems: 'stretch',
           justifyContent: 'center',
           margin: 'auto'
         }}
       >
-        {visibleParticipants.map((peer) => {
+        {sortedParticipants.map((peer, idx) => {
           const isPeerLocal = peer.socketId === 'local';
           const peerStream = isPeerLocal ? localStream : remoteStreams[peer.socketId];
+          const isOddLastTileOnMobile = isMobile && isPortrait && count === 3 && idx === 2;
+
           return (
             <div
               key={peer.socketId}
               style={{
                 width: '100%',
-                height: isMobile && isPortrait ? '100%' : 'auto',
-                maxHeight: tileMaxHeight,
+                height: '100%',
+                minHeight: isMobile && isPortrait && count > 2 ? '140px' : (isMobile ? '180px' : '200px'),
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'center'
+                justifyContent: 'center',
+                gridColumn: isOddLastTileOnMobile ? '1 / -1' : undefined,
+                borderRadius: '16px',
+                overflow: 'hidden'
               }}
             >
               <ParticipantTile
@@ -566,7 +469,7 @@ export const MeetingStage = ({
                 currentUserId={currentUserId}
                 onHostMute={onHostMute}
                 onHostKick={onHostKick}
-                aspectRatio={tileAspectRatio}
+                aspectRatio="auto"
               />
             </div>
           );
@@ -575,3 +478,5 @@ export const MeetingStage = ({
     </div>
   );
 };
+
+export default MeetingStage;

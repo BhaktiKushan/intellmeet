@@ -20,7 +20,6 @@ import {
   Copy,
   ShieldCheck,
   MoreVertical,
-  Globe,
   Maximize2
 } from 'lucide-react';
 
@@ -34,10 +33,6 @@ export const MeetingControls = ({
   isRecording,
   recordingSeconds,
   onToggleRecording,
-  showLiveTranscript,
-  onToggleLiveTranscript,
-  targetLanguage = 'none',
-  onSelectTargetLanguage,
   isHandRaised,
   onToggleHand,
   activeTab,
@@ -349,7 +344,7 @@ export const MeetingControls = ({
           )}
         </div>
 
-        {/* Screen Share (Highest Priority) */}
+        {/* Screen Share */}
         <button
           onClick={onToggleScreenShare}
           className={`control-btn ${isScreenSharing ? 'control-btn-primary' : 'control-btn-active'}`}
@@ -379,14 +374,14 @@ export const MeetingControls = ({
           />
         </button>
 
-        {/* AI Live Transcribe / Captions (Desktop) */}
+        {/* In-Meeting AI Assistant (Desktop) */}
         <button
-          onClick={onToggleLiveTranscript}
-          className={`control-btn desktop-only ${showLiveTranscript ? 'control-btn-primary' : 'control-btn-active'}`}
+          onClick={() => onToggleTab(activeTab === 'assistant' ? null : 'assistant')}
+          className={`control-btn desktop-only ${activeTab === 'assistant' ? 'control-btn-primary' : 'control-btn-active'}`}
           style={{ width: '46px', height: '46px', borderRadius: '50%', padding: 0 }}
-          title={showLiveTranscript ? 'Turn off live AI captions' : 'Turn on live AI captions'}
+          title="In-meeting AI Assistant"
         >
-          <Sparkles size={20} color={showLiveTranscript ? '#ffffff' : '#c084fc'} />
+          <Sparkles size={20} color={activeTab === 'assistant' ? '#ffffff' : '#c084fc'} />
         </button>
 
         {/* Raise Hand (Desktop) */}
@@ -469,6 +464,16 @@ export const MeetingControls = ({
           {layoutMode === 'grid' ? <Square size={18} /> : <Grid size={18} />}
         </button>
 
+        {/* In-Meeting AI Assistant Drawer Button */}
+        <button
+          onClick={() => onToggleTab(activeTab === 'assistant' ? null : 'assistant')}
+          className={`control-btn ${activeTab === 'assistant' ? 'control-btn-primary' : 'control-btn-active'}`}
+          style={{ width: '42px', height: '42px', borderRadius: '50%', padding: 0 }}
+          title="In-Meeting AI Assistant"
+        >
+          <Sparkles size={18} color={activeTab === 'assistant' ? '#ffffff' : '#c084fc'} />
+        </button>
+
         {/* In-Meeting Chat Drawer Button */}
         <button
           onClick={() => onToggleTab(activeTab === 'chat' ? null : 'chat')}
@@ -520,16 +525,6 @@ export const MeetingControls = ({
           }}>
             {participantCount}
           </span>
-        </button>
-
-        {/* Live AI Transcript & Translation Drawer Button */}
-        <button
-          onClick={() => onToggleTab(activeTab === 'transcript' ? null : 'transcript')}
-          className={`control-btn ${activeTab === 'transcript' ? 'control-btn-primary' : 'control-btn-active'}`}
-          style={{ width: '42px', height: '42px', borderRadius: '50%', padding: 0 }}
-          title="Live AI Transcript & Translation"
-        >
-          <Globe size={18} color={activeTab === 'transcript' ? '#ffffff' : '#818cf8'} />
         </button>
 
         {/* Collaborative Notes Drawer Button */}
@@ -608,6 +603,24 @@ export const MeetingControls = ({
               gridTemplateColumns: 'repeat(2, 1fr)',
               gap: '12px'
             }}>
+              {/* In-Meeting AI Assistant */}
+              <button
+                onClick={() => {
+                  setShowMobileMore(false);
+                  onToggleTab('assistant');
+                }}
+                className={`btn ${activeTab === 'assistant' ? 'btn-primary' : 'btn-secondary'}`}
+                style={{
+                  padding: '14px',
+                  justifyContent: 'flex-start',
+                  gap: '10px',
+                  borderRadius: '14px'
+                }}
+              >
+                <Sparkles size={18} color={activeTab === 'assistant' ? '#fff' : '#c084fc'} />
+                <span style={{ fontSize: '0.86rem' }}>AI Assistant</span>
+              </button>
+
               {/* Record Meeting */}
               <button
                 onClick={() => {
@@ -626,24 +639,6 @@ export const MeetingControls = ({
                 <span style={{ fontSize: '0.86rem' }}>
                   {isRecording ? `Stop REC (${formatTimer(recordingSeconds)})` : 'Record Meeting'}
                 </span>
-              </button>
-
-              {/* Live Captions */}
-              <button
-                onClick={() => {
-                  setShowMobileMore(false);
-                  onToggleLiveTranscript();
-                }}
-                className={`btn ${showLiveTranscript ? 'btn-primary' : 'btn-secondary'}`}
-                style={{
-                  padding: '14px',
-                  justifyContent: 'flex-start',
-                  gap: '10px',
-                  borderRadius: '14px'
-                }}
-              >
-                <Sparkles size={18} color={showLiveTranscript ? '#fff' : '#c084fc'} />
-                <span style={{ fontSize: '0.86rem' }}>Live Captions</span>
               </button>
 
               {/* Hand Raise */}
@@ -704,24 +699,6 @@ export const MeetingControls = ({
                 </span>
               </button>
 
-              {/* Live AI Transcript & Translation */}
-              <button
-                onClick={() => {
-                  setShowMobileMore(false);
-                  onToggleTab('transcript');
-                }}
-                className={`btn ${activeTab === 'transcript' ? 'btn-primary' : 'btn-secondary'}`}
-                style={{
-                  padding: '14px',
-                  justifyContent: 'flex-start',
-                  gap: '10px',
-                  borderRadius: '14px'
-                }}
-              >
-                <Globe size={18} color={activeTab === 'transcript' ? '#fff' : '#818cf8'} />
-                <span style={{ fontSize: '0.86rem' }}>Live Transcript</span>
-              </button>
-
               {/* Fullscreen Toggle */}
               <button
                 onClick={() => {
@@ -761,12 +738,13 @@ export const MeetingControls = ({
                   padding: '14px',
                   justifyContent: 'flex-start',
                   gap: '10px',
-                  borderRadius: '14px'
+                  borderRadius: '14px',
+                  gridColumn: 'span 2'
                 }}
               >
                 {layoutMode === 'grid' ? <Square size={18} color="#60a5fa" /> : <Grid size={18} color="#60a5fa" />}
                 <span style={{ fontSize: '0.86rem' }}>
-                  {layoutMode === 'grid' ? 'Stage Mode' : 'Grid Mode'}
+                  {layoutMode === 'grid' ? 'Switch to Stage Spotlight Mode' : 'Switch to Balanced Grid Mode'}
                 </span>
               </button>
             </div>
@@ -791,3 +769,5 @@ export const MeetingControls = ({
     </footer>
   );
 };
+
+export default MeetingControls;

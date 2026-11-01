@@ -141,20 +141,24 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
   const [chatMessages, setChatMessages] = useState([]);
   const [unreadChatCount, setUnreadChatCount] = useState(0);
   const [sharedNotes, setSharedNotes] = useState('## Meeting Collaboration & Action Items\n- Enterprise low-latency WebRTC verified\n- Multi-track recording with mixed audio ready\n');
-  const [showLiveTranscript, setShowLiveTranscript] = useState(true);
-  const [latestTranscript, setLatestTranscript] = useState(null);
-  const [interimTranscript, setInterimTranscript] = useState(null);
   const [transcriptLog, setTranscriptLog] = useState([]);
   const lastFinalTextRef = useRef(null);
   const isAudioMutedRef = useRef(false);
   useEffect(() => {
     isAudioMutedRef.current = isAudioMuted;
   }, [isAudioMuted]);
-  const [targetLanguage, setTargetLanguage] = useState('none'); // 'none' | 'hi' | 'es' | 'fr' | 'de' | 'ja' | 'zh' | 'ar' | 'pt' | 'ru'
-  const targetLanguageRef = useRef('none');
-  useEffect(() => {
-    targetLanguageRef.current = targetLanguage;
-  }, [targetLanguage]);
+
+  // In-Meeting Real-Time AI Assistant State
+  const [aiAssistantChat, setAiAssistantChat] = useState([
+    {
+      id: 'welcome',
+      answer: 'Hello! I am your IntellMeet in-meeting AI assistant. Ask me questions, request summaries, or check action items while the meeting is in progress.'
+    }
+  ]);
+  const [isAiThinking, setIsAiThinking] = useState(false);
+  const mobileAudioRecorderRef = useRef(null);
+  const mobileAudioIntervalRef = useRef(null);
+  const confirmedNameRef = useRef('');
   const [copiedCode, setCopiedCode] = useState(false);
 
   // Live Topic & Mobile Audio Stability State
@@ -267,10 +271,18 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       recordingAudioCtxRef.current = null;
     }
 
-    // 5. Stop speech recognition
+    // 5. Stop speech recognition & mobile audio recorder
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch (e) {}
       recognitionRef.current = null;
+    }
+    if (mobileAudioIntervalRef.current) {
+      clearTimeout(mobileAudioIntervalRef.current);
+      mobileAudioIntervalRef.current = null;
+    }
+    if (mobileAudioRecorderRef.current) {
+      try { mobileAudioRecorderRef.current.stop(); } catch (e) {}
+      mobileAudioRecorderRef.current = null;
     }
 
     // 6. Close all WebRTC peer connections and release track senders
@@ -764,10 +776,15 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
     });
     socketRef.current = socket;
 
+    const tabId = (typeof sessionStorage !== 'undefined' && sessionStorage.getItem('intellmeet_tab_id')) || `tab_${Math.random().toString(36).substring(2, 9)}`;
+    const participantSessionId = `${user?._id || 'guest'}_${tabId}`;
+    confirmedNameRef.current = confirmedName || user?.name || 'Guest Participant';
+
     socket.emit('join-room', {
       roomId,
       user: {
         _id: user?._id,
+        sessionId: participantSessionId,
         name: confirmedName || user?.name || 'Guest Participant',
         avatar: user?.avatar,
         role: userRole,
@@ -1025,26 +1042,14 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       }
     });
 
-    // Live AI Speech-to-Text transcript
+    // Background AI Speech-to-Text transcript for topic intelligence & post-meeting summary
     socket.on('transcript-update', (item) => {
-      if (!item || !item.text) return;
-
-      // If this is an interim speech update from another participant:
-      if (item.isFinal === false) {
-        setInterimTranscript(item);
-        return;
-      }
-
-      // Finalized transcript segment:
-      setInterimTranscript(null);
-      setLatestTranscript(item);
+      if (!item || !item.text || item.isFinal === false) return;
 
       setTranscriptLog(prev => {
-        // Prevent duplicate append by unique segmentId
         if (item.segmentId && prev.some(t => t.segmentId === item.segmentId)) {
           return prev;
         }
-        // Prevent immediate repeat of exact same text from same speaker
         const last = prev[prev.length - 1];
         if (
           last &&
@@ -1060,48 +1065,12 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       });
     });
 
-    // Live AI Speech Translation updates
-    socket.on('translation-update', (transItem) => {
-      if (!transItem || !transItem.translatedText) return;
-
-      setLatestTranscript(prev => {
-        if (!prev) return prev;
-        if (
-          (transItem.segmentId && prev.segmentId === transItem.segmentId) ||
-          prev.speaker === transItem.speaker
-        ) {
-          return {
-            ...prev,
-            translation: transItem.translatedText,
-            targetLanguage: transItem.targetLanguage
-          };
-        }
-        return prev;
-      });
-
-      setTranscriptLog(prev => {
-        let matched = false;
-        const updated = prev.map(t => {
-          if (
-            (transItem.segmentId && t.segmentId === transItem.segmentId) ||
-            (t.speaker === transItem.speaker && t.text === transItem.originalText)
-          ) {
-            matched = true;
-            return {
-              ...t,
-              translation: transItem.translatedText,
-              targetLanguage: transItem.targetLanguage
-            };
-          }
-          return t;
-        });
-
-        if (matched) {
-          transcriptLogRef.current = updated;
-          return updated;
-        }
-        return prev;
-      });
+    // In-Meeting AI Assistant responses from server
+    socket.on('ai-assistant-response', ({ question, answer }) => {
+      setIsAiThinking(false);
+      if (answer) {
+        setAiAssistantChat(prev => [...prev, { id: `a-${Date.now()}`, answer }]);
+      }
     });
 
     // Real-Time Live AI Topic Detection updates
@@ -1115,29 +1084,152 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
     initSpeechRecognition(socket);
   };
 
-  // Browser Web Speech API for AI Speech-to-Text & Translation
-  const initSpeechRecognition = (socket) => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
+  // In-Meeting AI Assistant Query Handler
+  const handleAskAiAssistant = async (question) => {
+    if (!question || !question.trim() || isAiThinking) return;
+    const userTurn = { id: `q-${Date.now()}`, question: question.trim() };
+    setAiAssistantChat(prev => [...prev, userTurn]);
+    setIsAiThinking(true);
 
     try {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true; // Enables live real-time speech preview without duplicate commits
-      recognition.lang = 'en-US';
+      const res = await api.askAiAssistant({
+        question: question.trim(),
+        transcript: transcriptLogRef.current,
+        liveTopic,
+        title: meeting?.title || 'Team Meeting',
+        notes: sharedNotes
+      });
 
-      const handleFinalTranscript = async (finalText) => {
-        if (!finalText) return;
-        // Strict guard: if muted, immediately discard (eliminates acoustic bleed from laptop speakers)
-        if (isAudioMutedRef.current) {
-          console.log('[SpeechRecognition] Suppressed speech while muted (preventing acoustic bleed)');
+      const answer = res?.data?.answer || 'I could not generate an answer at this time.';
+      setAiAssistantChat(prev => [...prev, { id: `a-${Date.now()}`, answer }]);
+    } catch (err) {
+      console.warn('[AI Assistant] Query error:', err.message);
+      if (socketRef.current) {
+        socketRef.current.emit('ask-ai-assistant', { roomId, question: question.trim() });
+      } else {
+        setAiAssistantChat(prev => [
+          ...prev,
+          { id: `err-${Date.now()}`, answer: 'AI Assistant temporarily unavailable. Please verify your connection.' }
+        ]);
+      }
+    } finally {
+      setIsAiThinking(false);
+    }
+  };
+
+  // Cross-Device Audio Stream Processor (Mobile devices & browsers without Web Speech API)
+  const startMobileAudioAssistant = useCallback((socket) => {
+    if (!socket || isCleaningUpRef.current) return;
+    if (mobileAudioRecorderRef.current) return;
+
+    if (!localStreamRef.current) {
+      setTimeout(() => startMobileAudioAssistant(socket), 1000);
+      return;
+    }
+    const audioTrack = localStreamRef.current.getAudioTracks()[0];
+    if (!audioTrack) {
+      setTimeout(() => startMobileAudioAssistant(socket), 1000);
+      return;
+    }
+
+    try {
+      let activeMimeType = 'audio/webm;codecs=opus';
+      if (typeof MediaRecorder !== 'undefined') {
+        if (!MediaRecorder.isTypeSupported(activeMimeType)) activeMimeType = 'audio/webm';
+        if (!MediaRecorder.isTypeSupported(activeMimeType)) activeMimeType = 'audio/mp4';
+        if (!MediaRecorder.isTypeSupported(activeMimeType)) activeMimeType = '';
+      }
+
+      const audioStream = new MediaStream([audioTrack]);
+
+      const recordSlice = () => {
+        if (isCleaningUpRef.current) return;
+        if (isAudioMutedRef.current || !isSpeechRecognitionActiveRef.current) {
+          mobileAudioIntervalRef.current = setTimeout(recordSlice, 800);
           return;
         }
+
+        try {
+          const chunks = [];
+          const recorder = activeMimeType
+            ? new MediaRecorder(audioStream, { mimeType: activeMimeType })
+            : new MediaRecorder(audioStream);
+          mobileAudioRecorderRef.current = recorder;
+
+          recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) chunks.push(e.data);
+          };
+
+          recorder.onstop = () => {
+            if (chunks.length > 0 && !isAudioMutedRef.current && isSpeechRecognitionActiveRef.current && !isCleaningUpRef.current) {
+              const completeBlob = new Blob(chunks, { type: activeMimeType || 'audio/webm' });
+              if (completeBlob.size > 1200) {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                  const res = reader.result;
+                  if (res && typeof res === 'string') {
+                    const base64Audio = res.split(',')[1];
+                    if (base64Audio && socketRef.current) {
+                      socketRef.current.emit('mobile-audio-speech', {
+                        roomId,
+                        audioBase64: base64Audio,
+                        mimeType: completeBlob.type || activeMimeType || 'audio/webm',
+                        speaker: confirmedNameRef.current || user?.name || 'Participant',
+                        userId: user?._id || null
+                      });
+                    }
+                  }
+                };
+                reader.readAsDataURL(completeBlob);
+              }
+            }
+            if (!isCleaningUpRef.current && !isAudioMutedRef.current && isSpeechRecognitionActiveRef.current) {
+              mobileAudioIntervalRef.current = setTimeout(recordSlice, 300);
+            }
+          };
+
+          recorder.start();
+          setTimeout(() => {
+            if (recorder && recorder.state === 'recording') {
+              try { recorder.stop(); } catch (e) {}
+            }
+          }, 3500);
+        } catch (recErr) {
+          mobileAudioIntervalRef.current = setTimeout(recordSlice, 2000);
+        }
+      };
+
+      recordSlice();
+    } catch (err) {
+      console.warn('[AudioProcessor] Init note:', err.message);
+    }
+  }, [roomId, user]);
+
+  // Robust Desktop & Laptop Web Speech API (English only) with automatic mobile fallback
+  const initSpeechRecognition = useCallback((socket) => {
+    const SpeechRecognition = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
+    if (!SpeechRecognition) {
+      startMobileAudioAssistant(socket);
+      return;
+    }
+
+    try {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.abort(); } catch (e) {}
+        recognitionRef.current = null;
+      }
+
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+
+      const handleFinalTranscript = (finalText) => {
+        if (!finalText || isAudioMutedRef.current || isCleaningUpRef.current) return;
 
         const cleanText = finalText.trim();
         if (!cleanText) return;
 
-        // Deduplication: suppress repeated sentences within 3.5 seconds
         const now = Date.now();
         const normalized = cleanText.toLowerCase().replace(/[.,!?;:]/g, '').trim();
         if (
@@ -1145,31 +1237,13 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
           lastFinalTextRef.current.text === normalized &&
           now - lastFinalTextRef.current.time < 3500
         ) {
-          console.log('[SpeechRecognition] Suppressed duplicate final text:', cleanText);
           return;
         }
         lastFinalTextRef.current = { text: normalized, time: now };
 
-        // Clear interim preview
-        setInterimTranscript(null);
-
-        const speakerName = user?.name || confirmedName || 'Unknown Speaker';
-        const segmentId = `seg-${user?._id || socketRef.current?.id || 'anon'}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+        const speakerName = confirmedNameRef.current || user?.name || 'Participant';
+        const segmentId = `seg-${user?._id || socketRef.current?.id || 'anon'}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
         const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-
-        // Translate finalized segment if target language is selected
-        let translationText = '';
-        const currentLang = targetLanguageRef.current;
-        if (currentLang && currentLang !== 'none') {
-          try {
-            const transRes = await api.translateText(cleanText, currentLang);
-            if (transRes?.data?.translatedText) {
-              translationText = transRes.data.translatedText;
-            }
-          } catch (e) {
-            console.warn('[SpeechRecognition] Translation notice:', e.message);
-          }
-        }
 
         const transcriptItem = {
           segmentId,
@@ -1177,13 +1251,10 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
           userId: user?._id || null,
           participantId: user?._id || socketRef.current?.id || null,
           text: cleanText,
-          translation: translationText,
-          targetLanguage: currentLang !== 'none' ? currentLang : '',
           timestamp,
           isFinal: true
         };
 
-        setLatestTranscript(transcriptItem);
         setTranscriptLog(prev => {
           if (prev.some(t => t.segmentId === segmentId)) return prev;
           const next = [...prev, transcriptItem];
@@ -1197,10 +1268,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       };
 
       recognition.onresult = (event) => {
-        // Discard all speech if muted
-        if (isAudioMutedRef.current) return;
-
-        let interimText = '';
+        if (isAudioMutedRef.current || isCleaningUpRef.current) return;
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           const result = event.results[i];
           if (result.isFinal) {
@@ -1208,49 +1276,38 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
             if (text && text.trim()) {
               handleFinalTranscript(text.trim());
             }
-          } else {
-            interimText += result[0].transcript;
           }
-        }
-
-        if (interimText.trim() && !isAudioMutedRef.current) {
-          const speakerName = user?.name || confirmedName || 'Unknown Speaker';
-          const interimItem = {
-            speaker: speakerName,
-            userId: user?._id || null,
-            text: interimText.trim(),
-            isFinal: false,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-          };
-          setInterimTranscript(interimItem);
         }
       };
 
       recognition.onend = () => {
-        // Only restart if the user is unmuted and session is still active
-        if (!isAudioMutedRef.current && isSpeechRecognitionActiveRef.current && !isCleaningUpRef.current) {
-          try {
-            recognition.start();
-          } catch (err) {
-            // Ignore if already listening
-          }
+        if (!isAudioMutedRef.current && isSpeechRecognitionActiveRef.current && !isCleaningUpRef.current && socketRef.current) {
+          setTimeout(() => {
+            if (!isAudioMutedRef.current && isSpeechRecognitionActiveRef.current && !isCleaningUpRef.current && socketRef.current) {
+              initSpeechRecognition(socketRef.current);
+            }
+          }, 300);
         }
       };
 
       recognition.onerror = (err) => {
         if (err.error !== 'no-speech' && err.error !== 'aborted') {
-          console.warn('[SpeechRecognition] Engine event:', err.error);
+          console.warn('[SpeechRecognition] Desktop engine event:', err.error);
+          if (err.error === 'audio-capture' || err.error === 'not-allowed' || err.error === 'service-not-allowed' || err.error === 'network') {
+            startMobileAudioAssistant(socket);
+          }
         }
       };
 
       if (!isAudioMutedRef.current) {
-        recognition.start();
+        try { recognition.start(); } catch (e) {}
       }
       recognitionRef.current = recognition;
     } catch (err) {
-      console.warn('[SpeechRecognition] Init note:', err.message);
+      console.warn('[SpeechRecognition] Desktop init fallback to audio stream:', err.message);
+      startMobileAudioAssistant(socket);
     }
-  };
+  }, [roomId, user, startMobileAudioAssistant]);
 
   // ----------------------------------------------------
   // Audio & Video Toggles
@@ -1270,10 +1327,9 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
           if (recognitionRef.current) {
             try { recognitionRef.current.abort(); } catch (e) {}
           }
-          setInterimTranscript(null);
         } else {
-          if (isSpeechRecognitionActiveRef.current && recognitionRef.current) {
-            try { recognitionRef.current.start(); } catch (e) {}
+          if (isSpeechRecognitionActiveRef.current && socketRef.current) {
+            initSpeechRecognition(socketRef.current);
           }
         }
 
@@ -2038,73 +2094,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
           setLayoutMode={setLayoutMode}
         />
 
-        {/* Live Speech-to-Text AI Captions Banner */}
-        {showLiveTranscript && (interimTranscript || latestTranscript) && (
-          <div
-            className="meeting-captions-banner"
-            style={{
-              position: 'absolute',
-              bottom: '24px',
-              left: '50%',
-              transform: 'translateX(-50%)',
-              maxWidth: '680px',
-              width: '90%',
-              background: 'rgba(10, 15, 26, 0.94)',
-              backdropFilter: 'blur(20px)',
-              border: interimTranscript ? '1px dashed rgba(99, 102, 241, 0.6)' : '1px solid rgba(99, 102, 241, 0.35)',
-              borderRadius: '14px',
-              padding: '12px 20px',
-              boxShadow: 'var(--shadow-lg)',
-              zIndex: 30,
-              display: 'flex',
-              alignItems: 'center',
-              gap: '12px',
-              animation: 'fadeIn 0.25s ease'
-            }}
-          >
-            <div style={{
-              width: '32px',
-              height: '32px',
-              borderRadius: '8px',
-              background: 'rgba(99, 102, 241, 0.2)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0
-            }}>
-              <Sparkles size={16} color="#818cf8" className={interimTranscript ? 'animate-pulse' : ''} />
-            </div>
-            <div style={{ flex: 1, textAlign: 'left' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '3px' }}>
-                <span style={{ fontSize: '0.72rem', color: '#818cf8', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {interimTranscript ? (
-                    <>
-                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#818cf8', display: 'inline-block' }} />
-                      {interimTranscript.speaker || 'Unknown Speaker'} (speaking...)
-                    </>
-                  ) : (
-                    <>
-                      {latestTranscript?.speaker || 'Unknown Speaker'} &nbsp;•&nbsp; {latestTranscript?.timestamp}
-                    </>
-                  )}
-                </span>
-                {!interimTranscript && latestTranscript?.translation && (
-                  <span style={{ fontSize: '0.68rem', background: 'rgba(99, 102, 241, 0.25)', color: '#c7d2fe', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
-                    AI Translated ({latestTranscript.targetLanguage?.toUpperCase() || 'LIVE'})
-                  </span>
-                )}
-              </div>
-              <div style={{ fontSize: '0.88rem', color: interimTranscript ? '#cbd5e1' : '#f8fafc', fontWeight: 500, fontStyle: interimTranscript ? 'italic' : 'normal' }}>
-                "{interimTranscript ? interimTranscript.text : latestTranscript?.text}"
-              </div>
-              {!interimTranscript && latestTranscript?.translation && (
-                <div style={{ fontSize: '0.84rem', color: '#38bdf8', fontWeight: 500, marginTop: '4px', borderTop: '1px solid rgba(255, 255, 255, 0.08)', paddingTop: '4px' }}>
-                  🌐 {latestTranscript.translation}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+
 
         {/* Slide-out Side Drawer (Chat, Participants, Transcript & Translations, Notes, Info) */}
         <MeetingSideDrawer
@@ -2126,10 +2116,10 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
           onUpdateNotes={setSharedNotes}
           roomId={roomId}
           meeting={meeting}
-          transcriptLog={transcriptLog}
-          interimTranscript={interimTranscript}
-          targetLanguage={targetLanguage}
-          onSelectTargetLanguage={setTargetLanguage}
+          liveTopic={liveTopic}
+          aiAssistantChat={aiAssistantChat}
+          onAskAssistant={handleAskAiAssistant}
+          isAiThinking={isAiThinking}
         />
       </div>
 
@@ -2144,10 +2134,6 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         isRecording={isRecording}
         recordingSeconds={recordingSeconds}
         onToggleRecording={handleOpenRecordingDialog}
-        showLiveTranscript={showLiveTranscript}
-        onToggleLiveTranscript={() => setShowLiveTranscript(!showLiveTranscript)}
-        targetLanguage={targetLanguage}
-        onSelectTargetLanguage={setTargetLanguage}
         isHandRaised={isHandRaised}
         onToggleHand={toggleHand}
         activeTab={activeTab}
