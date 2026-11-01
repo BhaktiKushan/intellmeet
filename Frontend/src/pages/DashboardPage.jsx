@@ -38,8 +38,6 @@ export const DashboardPage = ({
   const [scheduleDate, setScheduleDate] = useState('');
   const [scheduleTime, setScheduleTime] = useState('');
   const [scheduleDesc, setScheduleDesc] = useState('');
-  const [isScheduling, setIsScheduling] = useState(false);
-  const [scheduleError, setScheduleError] = useState('');
   const [copiedCode, setCopiedCode] = useState('');
 
   const loadDashboardData = async () => {
@@ -95,29 +93,23 @@ export const DashboardPage = ({
     onJoinMeeting(cleanCode);
   };
 
-  // Quick Action 3: Schedule New Meeting (Idempotent with in-flight lock & state protection)
+  // Quick Action 3: Schedule New Meeting
   const handleScheduleMeeting = async (e) => {
     e.preventDefault();
-    if (isScheduling) return;
-    const cleanTitle = scheduleTitle.trim();
-    if (!cleanTitle) return;
-
-    setIsScheduling(true);
-    setScheduleError('');
+    if (!scheduleTitle.trim()) return;
 
     try {
+      const randomCode = `meet-${Math.random().toString(36).substring(2, 6)}-${Math.random().toString(36).substring(2, 6)}`;
       const scheduleDateTime = scheduleDate && scheduleTime
         ? new Date(`${scheduleDate}T${scheduleTime}`)
         : new Date(Date.now() + 3600000);
 
-      const clientSubmissionId = `sched-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-
       await api.createMeeting({
-        title: cleanTitle,
+        title: scheduleTitle.trim(),
         description: scheduleDesc.trim() || 'Scheduled enterprise meeting.',
+        code: randomCode,
         status: 'scheduled',
-        scheduledAt: scheduleDateTime,
-        clientSubmissionId
+        scheduledAt: scheduleDateTime
       });
 
       setShowScheduleModal(false);
@@ -125,12 +117,9 @@ export const DashboardPage = ({
       setScheduleDate('');
       setScheduleTime('');
       setScheduleDesc('');
-      await loadDashboardData();
+      loadDashboardData();
     } catch (err) {
-      console.error('Schedule meeting error:', err);
-      setScheduleError(err.message || 'Failed to schedule meeting. Please try again.');
-    } finally {
-      setIsScheduling(false);
+      alert('Failed to schedule meeting: ' + err.message);
     }
   };
 
@@ -734,20 +723,6 @@ export const DashboardPage = ({
               Plan a future collaboration session with automated AI transcription and summary.
             </p>
 
-            {scheduleError && (
-              <div style={{
-                padding: '10px 14px',
-                borderRadius: '8px',
-                background: 'rgba(239, 68, 68, 0.15)',
-                border: '1px solid rgba(239, 68, 68, 0.3)',
-                color: '#fca5a5',
-                fontSize: '0.82rem',
-                marginBottom: '16px'
-              }}>
-                {scheduleError}
-              </div>
-            )}
-
             <form onSubmit={handleScheduleMeeting} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
                 <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '6px' }}>
@@ -756,7 +731,6 @@ export const DashboardPage = ({
                 <input
                   type="text"
                   required
-                  disabled={isScheduling}
                   placeholder="e.g. Q4 Product Architecture Review"
                   value={scheduleTitle}
                   onChange={(e) => setScheduleTitle(e.target.value)}
@@ -771,7 +745,6 @@ export const DashboardPage = ({
                   </label>
                   <input
                     type="date"
-                    disabled={isScheduling}
                     value={scheduleDate}
                     onChange={(e) => setScheduleDate(e.target.value)}
                     className="input-field"
@@ -783,7 +756,6 @@ export const DashboardPage = ({
                   </label>
                   <input
                     type="time"
-                    disabled={isScheduling}
                     value={scheduleTime}
                     onChange={(e) => setScheduleTime(e.target.value)}
                     className="input-field"
@@ -797,7 +769,6 @@ export const DashboardPage = ({
                 </label>
                 <textarea
                   rows={3}
-                  disabled={isScheduling}
                   placeholder="Describe key objectives or discussion topics..."
                   value={scheduleDesc}
                   onChange={(e) => setScheduleDesc(e.target.value)}
@@ -809,43 +780,13 @@ export const DashboardPage = ({
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '12px' }}>
                 <button
                   type="button"
-                  disabled={isScheduling}
-                  onClick={() => {
-                    setShowScheduleModal(false);
-                    setScheduleError('');
-                  }}
+                  onClick={() => setShowScheduleModal(false)}
                   className="btn btn-secondary"
                 >
                   Cancel
                 </button>
-                <button 
-                  type="submit" 
-                  disabled={isScheduling || !scheduleTitle.trim()} 
-                  className="btn btn-primary"
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    opacity: (isScheduling || !scheduleTitle.trim()) ? 0.7 : 1,
-                    cursor: (isScheduling || !scheduleTitle.trim()) ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  {isScheduling ? (
-                    <>
-                      <span style={{
-                        display: 'inline-block',
-                        width: 14,
-                        height: 14,
-                        border: '2px solid rgba(255, 255, 255, 0.3)',
-                        borderTopColor: '#fff',
-                        borderRadius: '50%',
-                        animation: 'spin 0.8s linear infinite'
-                      }} />
-                      <span>Scheduling...</span>
-                    </>
-                  ) : (
-                    <span>Schedule Meeting</span>
-                  )}
+                <button type="submit" className="btn btn-primary">
+                  Schedule Meeting
                 </button>
               </div>
             </form>

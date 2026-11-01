@@ -2,16 +2,8 @@ const rawBackend = import.meta.env.VITE_BACKEND_URL || '';
 const BACKEND_URL = rawBackend.trim().replace(/\/$/, '');
 const API_BASE = BACKEND_URL ? `${BACKEND_URL}/api` : '/api';
 
-export const getAuthToken = () => {
-  try {
-    return sessionStorage.getItem('intellmeet_token') || localStorage.getItem('intellmeet_token');
-  } catch (e) {
-    return null;
-  }
-};
-
 const getHeaders = () => {
-  const token = getAuthToken();
+  const token = localStorage.getItem('intellmeet_token');
   const headers = {
     'Content-Type': 'application/json'
   };

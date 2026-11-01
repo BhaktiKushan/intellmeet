@@ -33,8 +33,22 @@ const ICE_SERVERS = {
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' }
+    { urls: 'stun:stun.relay.metered.ca:80' },
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
   ],
   iceCandidatePoolSize: 10
 };
@@ -76,7 +90,6 @@ const PersistentRemoteAudio = ({ socketId, stream, onAutoplayBlocked }) => {
 
   return (
     <audio
-      id={`persistent-audio-${socketId}`}
       ref={audioRef}
       autoPlay
       playsInline
@@ -175,8 +188,6 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
   const iceQueueRef = useRef({}); // { [socketId]: [candidate] }
   const socketRef = useRef(null);
   const recognitionRef = useRef(null);
-  const mobileAudioRecorderRef = useRef(null);
-  const mobileAudioIntervalRef = useRef(null);
   const recordingTimerRef = useRef(null);
 
   // Web Audio Mixer Refs
@@ -197,7 +208,6 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
   const chatMessagesRef = useRef([]);
   const isSpeechRecognitionActiveRef = useRef(true);
   const isCleaningUpRef = useRef(false);
-  const confirmedNameRef = useRef('');
 
   // ----------------------------------------------------
   // Instant Media and Connection Termination (Camera, Mic, WebRTC)
@@ -257,15 +267,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       recordingAudioCtxRef.current = null;
     }
 
-    // 5. Stop speech recognition and mobile audio assistant
-    if (mobileAudioRecorderRef.current && mobileAudioRecorderRef.current.state !== 'inactive') {
-      try { mobileAudioRecorderRef.current.stop(); } catch (e) {}
-      mobileAudioRecorderRef.current = null;
-    }
-    if (mobileAudioIntervalRef.current) {
-      clearInterval(mobileAudioIntervalRef.current);
-      mobileAudioIntervalRef.current = null;
-    }
+    // 5. Stop speech recognition
     if (recognitionRef.current) {
       try { recognitionRef.current.stop(); } catch (e) {}
       recognitionRef.current = null;
@@ -356,12 +358,8 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
           }
         });
       });
-      // Ensure speech assistant is initialized if meeting is already live
-      if (!inLobby && socketRef.current && isSpeechRecognitionActiveRef.current) {
-        initSpeechRecognition(socketRef.current);
-      }
     }
-  }, [localStream, inLobby, initSpeechRecognition]);
+  }, [localStream]);
 
   useEffect(() => {
     remoteStreamsRef.current = remoteStreams;
@@ -457,20 +455,6 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         }
         setPermissionError(null);
         await updateDeviceList();
-
-        // Ensure all active peer connections receive the new stream tracks immediately
-        Object.values(peersRef.current).forEach(pc => {
-          if (pc.signalingState === 'closed') return;
-          const senders = pc.getSenders();
-          stream.getTracks().forEach(track => {
-            const sender = senders.find(s => s.track && s.track.kind === track.kind);
-            if (sender) {
-              sender.replaceTrack(track).catch(() => {});
-            } else {
-              try { pc.addTrack(track, stream); } catch (e) {}
-            }
-          });
-        });
       } catch (err) {
         console.warn('[Media Init] Could not access user media:', err.message);
         setPermissionError(err.message || 'Camera or microphone access denied');
@@ -637,15 +621,15 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       });
     }
 
-    // Ensure audio and video transceivers exist with sendrecv direction so sending/receiving is bidirectional
+    // Ensure audio and video transceivers exist so reception is guaranteed even if local device lacks mic/camera
     const senders = pc.getSenders();
     const hasAudioSender = senders.some(s => s.track && s.track.kind === 'audio');
     const hasVideoSender = senders.some(s => s.track && s.track.kind === 'video');
     if (!hasAudioSender) {
-      try { pc.addTransceiver('audio', { direction: 'sendrecv' }); } catch (e) {}
+      try { pc.addTransceiver('audio', { direction: 'recvonly' }); } catch (e) {}
     }
     if (!hasVideoSender) {
-      try { pc.addTransceiver('video', { direction: 'sendrecv' }); } catch (e) {}
+      try { pc.addTransceiver('video', { direction: 'recvonly' }); } catch (e) {}
     }
 
     // Remote track arrived
@@ -769,7 +753,6 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
   // Join Room & Initialize Socket.IO Signaling
   // ----------------------------------------------------
   const handleJoinMeeting = (confirmedName) => {
-    if (confirmedName) confirmedNameRef.current = confirmedName;
     setInLobby(false);
 
     const rawSocketUrl = import.meta.env.VITE_BACKEND_URL || (window.location.hostname === 'localhost' ? '/' : 'https://intellmeet-backend-uuk5.onrender.com');
@@ -834,10 +817,8 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
             console.log(`[WebRTC] Glare collision detected: impolite peer ignoring offer from ${callerSocketId}`);
             return;
           }
-          console.log(`[WebRTC] Glare collision detected: polite peer handling offer from ${callerSocketId} in state ${pc.signalingState}`);
-          if (pc.signalingState === 'have-local-offer') {
-            await pc.setLocalDescription({ type: 'rollback' });
-          }
+          console.log(`[WebRTC] Glare collision detected: polite peer rolling back local offer for ${callerSocketId}`);
+          await pc.setLocalDescription({ type: 'rollback' });
         }
 
         await pc.setRemoteDescription(new RTCSessionDescription(sdp));
@@ -1134,130 +1115,24 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
     initSpeechRecognition(socket);
   };
 
-  // Mobile & Cross-Device Audio Stream Processor (Standalone Complete File Slices for Gemini AI)
-  const startMobileAudioAssistant = useCallback((socket) => {
-    if (!socket || isCleaningUpRef.current) return;
-    if (mobileAudioRecorderRef.current) return;
-
-    if (!localStreamRef.current) {
-      setTimeout(() => startMobileAudioAssistant(socket), 1000);
-      return;
-    }
-    const audioTrack = localStreamRef.current.getAudioTracks()[0];
-    if (!audioTrack) {
-      setTimeout(() => startMobileAudioAssistant(socket), 1000);
-      return;
-    }
-
-    try {
-      let activeMimeType = 'audio/webm;codecs=opus';
-      if (!MediaRecorder.isTypeSupported(activeMimeType)) activeMimeType = 'audio/webm';
-      if (!MediaRecorder.isTypeSupported(activeMimeType)) activeMimeType = 'audio/mp4';
-      if (!MediaRecorder.isTypeSupported(activeMimeType)) activeMimeType = '';
-
-      const audioStream = new MediaStream([audioTrack]);
-
-      const recordSlice = () => {
-        if (isCleaningUpRef.current) return;
-        if (isAudioMutedRef.current || !isSpeechRecognitionActiveRef.current) {
-          mobileAudioIntervalRef.current = setTimeout(recordSlice, 800);
-          return;
-        }
-
-        try {
-          const chunks = [];
-          const recorder = activeMimeType
-            ? new MediaRecorder(audioStream, { mimeType: activeMimeType })
-            : new MediaRecorder(audioStream);
-          mobileAudioRecorderRef.current = recorder;
-
-          recorder.ondataavailable = (e) => {
-            if (e.data && e.data.size > 0) chunks.push(e.data);
-          };
-
-          recorder.onstop = () => {
-            if (chunks.length > 0 && !isAudioMutedRef.current && isSpeechRecognitionActiveRef.current && !isCleaningUpRef.current) {
-              const completeBlob = new Blob(chunks, { type: activeMimeType || 'audio/webm' });
-              // Check if blob is large enough to contain speech (> 1.2KB)
-              if (completeBlob.size > 1200) {
-                const reader = new FileReader();
-                reader.onloadend = () => {
-                  const res = reader.result;
-                  if (res && typeof res === 'string') {
-                    const base64Audio = res.split(',')[1];
-                    if (base64Audio && socketRef.current) {
-                      socketRef.current.emit('mobile-audio-speech', {
-                        roomId,
-                        audioBase64,
-                        mimeType: completeBlob.type || 'audio/webm',
-                        speaker: confirmedNameRef.current || user?.name || 'Participant',
-                        userId: user?._id || null
-                      });
-                    }
-                  }
-                };
-                reader.readAsDataURL(completeBlob);
-              }
-            }
-            if (!isCleaningUpRef.current) {
-              mobileAudioIntervalRef.current = setTimeout(recordSlice, 250);
-            }
-          };
-
-          // Record for 3.5s then stop to ensure full valid standalone container headers
-          recorder.start();
-          setTimeout(() => {
-            if (recorder && recorder.state === 'recording') {
-              try { recorder.stop(); } catch (e) {}
-            }
-          }, 3500);
-
-        } catch (err) {
-          console.warn('[AudioAssistant] Recording cycle notice:', err.message);
-          if (!isCleaningUpRef.current) {
-            mobileAudioIntervalRef.current = setTimeout(recordSlice, 2000);
-          }
-        }
-      };
-
-      recordSlice();
-      console.log('[MobileAI] Standalone audio cycle processor initialized');
-    } catch (e) {
-      console.warn('[MobileAI] Could not initialize mobile audio assistant:', e.message);
-    }
-  }, [roomId, user]);
-
-  // Browser Web Speech API for AI Speech-to-Text & Translation (with Mobile & Fallback Assistant)
-  const initSpeechRecognition = useCallback((socket) => {
-    if (!socket || isCleaningUpRef.current) return;
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  // Browser Web Speech API for AI Speech-to-Text & Translation
+  const initSpeechRecognition = (socket) => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-    // On mobile devices, Web Speech API conflicts with WebRTC mic hardware lock or crashes.
-    // Use the reliable Gemini multimodal audio stream assistant directly!
-    if (isMobile || !SpeechRecognition) {
-      console.log('[SpeechRecognition] Using Real-Time Gemini Multimodal Audio Assistant');
-      startMobileAudioAssistant(socket);
-      return;
-    }
+    if (!SpeechRecognition) return;
 
     try {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.onend = null;
-          recognitionRef.current.onerror = null;
-          recognitionRef.current.abort();
-        } catch (e) {}
-        recognitionRef.current = null;
-      }
-
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
-      recognition.interimResults = true;
+      recognition.interimResults = true; // Enables live real-time speech preview without duplicate commits
       recognition.lang = 'en-US';
 
       const handleFinalTranscript = async (finalText) => {
-        if (!finalText || isAudioMutedRef.current || isCleaningUpRef.current) return;
+        if (!finalText) return;
+        // Strict guard: if muted, immediately discard (eliminates acoustic bleed from laptop speakers)
+        if (isAudioMutedRef.current) {
+          console.log('[SpeechRecognition] Suppressed speech while muted (preventing acoustic bleed)');
+          return;
+        }
 
         const cleanText = finalText.trim();
         if (!cleanText) return;
@@ -1270,6 +1145,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
           lastFinalTextRef.current.text === normalized &&
           now - lastFinalTextRef.current.time < 3500
         ) {
+          console.log('[SpeechRecognition] Suppressed duplicate final text:', cleanText);
           return;
         }
         lastFinalTextRef.current = { text: normalized, time: now };
@@ -1277,7 +1153,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         // Clear interim preview
         setInterimTranscript(null);
 
-        const speakerName = confirmedNameRef.current || user?.name || 'Unknown Speaker';
+        const speakerName = user?.name || confirmedName || 'Unknown Speaker';
         const segmentId = `seg-${user?._id || socketRef.current?.id || 'anon'}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
         const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 
@@ -1321,7 +1197,8 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       };
 
       recognition.onresult = (event) => {
-        if (isAudioMutedRef.current || isCleaningUpRef.current) return;
+        // Discard all speech if muted
+        if (isAudioMutedRef.current) return;
 
         let interimText = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
@@ -1337,7 +1214,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         }
 
         if (interimText.trim() && !isAudioMutedRef.current) {
-          const speakerName = confirmedNameRef.current || user?.name || 'Unknown Speaker';
+          const speakerName = user?.name || confirmedName || 'Unknown Speaker';
           const interimItem = {
             speaker: speakerName,
             userId: user?._id || null,
@@ -1350,39 +1227,30 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       };
 
       recognition.onend = () => {
-        // Automatically restart fresh session if unmuted and still active
+        // Only restart if the user is unmuted and session is still active
         if (!isAudioMutedRef.current && isSpeechRecognitionActiveRef.current && !isCleaningUpRef.current) {
-          setTimeout(() => {
-            if (!isAudioMutedRef.current && isSpeechRecognitionActiveRef.current && !isCleaningUpRef.current && socketRef.current) {
-              initSpeechRecognition(socketRef.current);
-            }
-          }, 300);
+          try {
+            recognition.start();
+          } catch (err) {
+            // Ignore if already listening
+          }
         }
       };
 
       recognition.onerror = (err) => {
         if (err.error !== 'no-speech' && err.error !== 'aborted') {
-          console.warn('[SpeechRecognition] Desktop engine event:', err.error);
-          // If desktop Web Speech API has a network/capture issue, switch to audio stream assistant
-          if (err.error === 'audio-capture' || err.error === 'not-allowed' || err.error === 'service-not-allowed' || err.error === 'network') {
-            startMobileAudioAssistant(socket);
-          }
+          console.warn('[SpeechRecognition] Engine event:', err.error);
         }
       };
 
       if (!isAudioMutedRef.current) {
-        try {
-          recognition.start();
-        } catch (e) {
-          startMobileAudioAssistant(socket);
-        }
+        recognition.start();
       }
       recognitionRef.current = recognition;
     } catch (err) {
       console.warn('[SpeechRecognition] Init note:', err.message);
-      startMobileAudioAssistant(socket);
     }
-  }, [roomId, user, startMobileAudioAssistant]);
+  };
 
   // ----------------------------------------------------
   // Audio & Video Toggles
@@ -1399,12 +1267,13 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         isAudioMutedRef.current = nextMuted;
 
         if (nextMuted) {
-          // Suppress interim preview when muted
+          if (recognitionRef.current) {
+            try { recognitionRef.current.abort(); } catch (e) {}
+          }
           setInterimTranscript(null);
         } else {
-          // Resume speech recognition or audio assistant if not active
-          if (isSpeechRecognitionActiveRef.current && socketRef.current) {
-            initSpeechRecognition(socketRef.current);
+          if (isSpeechRecognitionActiveRef.current && recognitionRef.current) {
+            try { recognitionRef.current.start(); } catch (e) {}
           }
         }
 
@@ -1416,9 +1285,6 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       const nextMuted = !isAudioMuted;
       setIsAudioMuted(nextMuted);
       isAudioMutedRef.current = nextMuted;
-      if (!nextMuted && isSpeechRecognitionActiveRef.current && socketRef.current) {
-        initSpeechRecognition(socketRef.current);
-      }
     }
   };
 
