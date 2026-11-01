@@ -44,7 +44,7 @@ export const AnalyticsPage = ({ onBack, onNavigateTab }) => {
   const metrics = data?.metrics || {};
   const taskBreakdown = data?.taskBreakdown || { backlog: 0, todo: 0, inProgress: 0, inReview: 0, done: 0 };
   const weeklyTrend = data?.weeklyTrend || [];
-  const maxWeekly = Math.max(...weeklyTrend.map(d => Math.max(d.meetings, d.aiSummariesGenerated)), 10);
+  const maxWeekly = Math.max(...weeklyTrend.map(d => Math.max(d?.meetings || 0, d?.aiSummariesGenerated || 0)), 10);
 
   const totalTasks = metrics.totalTasks || 1;
 

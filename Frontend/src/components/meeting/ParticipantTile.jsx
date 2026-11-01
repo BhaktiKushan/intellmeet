@@ -36,13 +36,17 @@ export const ParticipantTile = ({
 
   // Re-evaluate whenever tracks are added or removed dynamically
   useEffect(() => {
-    if (!stream) return;
+    if (!stream || typeof stream.addEventListener !== 'function') return;
     const handleTracks = () => setTrackRevision(r => r + 1);
-    stream.addEventListener('addtrack', handleTracks);
-    stream.addEventListener('removetrack', handleTracks);
+    try {
+      stream.addEventListener('addtrack', handleTracks);
+      stream.addEventListener('removetrack', handleTracks);
+    } catch (e) {}
     return () => {
-      stream.removeEventListener('addtrack', handleTracks);
-      stream.removeEventListener('removetrack', handleTracks);
+      try {
+        stream.removeEventListener('addtrack', handleTracks);
+        stream.removeEventListener('removetrack', handleTracks);
+      } catch (e) {}
     };
   }, [stream]);
 
@@ -63,7 +67,7 @@ export const ParticipantTile = ({
     }
   }, [stream, isLocal]);
 
-  const hasVideoStream = Boolean(stream && stream.getVideoTracks().length > 0 && !peer.isVideoOff);
+  const hasVideoStream = Boolean(stream && typeof stream.getVideoTracks === 'function' && stream.getVideoTracks().length > 0 && !peer.isVideoOff);
   const isSpeaking = peer.isSpeaking && !peer.isAudioMuted;
 
   // Toggle local speaker audio for this specific remote peer
@@ -118,6 +122,7 @@ export const ParticipantTile = ({
 
       {/* Video Element (Video display only; audio handled by dedicated audio element) */}
       <video
+        key={`video-elem-${peer.socketId}`}
         ref={videoRef}
         autoPlay
         playsInline

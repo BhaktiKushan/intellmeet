@@ -20,7 +20,10 @@ import {
   Copy,
   ShieldCheck,
   MoreVertical,
-  Maximize2
+  Maximize2,
+  Subtitles,
+  Pause,
+  Play
 } from 'lucide-react';
 
 export const MeetingControls = ({
@@ -31,8 +34,13 @@ export const MeetingControls = ({
   isScreenSharing,
   onToggleScreenShare,
   isRecording,
+  isRecordingPaused = false,
+  onPauseRecording,
+  onResumeRecording,
   recordingSeconds,
   onToggleRecording,
+  showLiveSpeech = true,
+  onToggleLiveSpeech,
   isHandRaised,
   onToggleHand,
   activeTab,
@@ -355,23 +363,59 @@ export const MeetingControls = ({
         </button>
 
         {/* Record Meeting (Desktop) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <button
+            onClick={onToggleRecording}
+            className={`control-btn desktop-only ${isRecording ? 'control-btn-danger' : 'control-btn-active'}`}
+            style={{
+              width: '46px',
+              height: '46px',
+              borderRadius: isRecording ? '23px 0 0 23px' : '50%',
+              padding: 0,
+              boxShadow: isRecording ? '0 0 16px rgba(239, 68, 68, 0.65)' : 'none'
+            }}
+            title={isRecording ? 'Stop Recording' : 'Record meeting with audio'}
+          >
+            <Circle
+              size={18}
+              fill={isRecording ? '#ffffff' : 'transparent'}
+              color={isRecording ? '#ffffff' : 'currentColor'}
+            />
+          </button>
+          {isRecording && (
+            <button
+              onClick={isRecordingPaused ? onResumeRecording : onPauseRecording}
+              className={`control-btn desktop-only ${isRecordingPaused ? 'control-btn-warning' : 'control-btn-danger'}`}
+              style={{
+                width: '32px',
+                height: '46px',
+                borderRadius: '0 23px 23px 0',
+                padding: 0,
+                borderLeft: '1px solid rgba(255, 255, 255, 0.2)'
+              }}
+              title={isRecordingPaused ? 'Resume recording' : 'Pause recording'}
+            >
+              {isRecordingPaused ? <Play size={14} fill="#ffffff" /> : <Pause size={14} fill="#ffffff" />}
+            </button>
+          )}
+        </div>
+
+        {/* Live Speech Subtitle Toggle (Desktop) */}
         <button
-          onClick={onToggleRecording}
-          className={`control-btn desktop-only ${isRecording ? 'control-btn-danger' : 'control-btn-active'}`}
+          onClick={onToggleLiveSpeech}
+          className={`control-btn desktop-only ${showLiveSpeech ? 'control-btn-active' : ''}`}
           style={{
             width: '46px',
             height: '46px',
             borderRadius: '50%',
             padding: 0,
-            boxShadow: isRecording ? '0 0 16px rgba(239, 68, 68, 0.65)' : 'none'
+            background: showLiveSpeech ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+            border: showLiveSpeech ? '1px solid rgba(99, 102, 241, 0.5)' : '1px solid var(--border-subtle)',
+            color: showLiveSpeech ? '#818cf8' : 'var(--text-muted)'
           }}
-          title={isRecording ? 'Stop Recording' : 'Record meeting with audio'}
+          title={showLiveSpeech ? 'Hide Live AI Speech Subtitles' : 'Show Live AI Speech Subtitles'}
         >
-          <Circle
-            size={18}
-            fill={isRecording ? '#ffffff' : 'transparent'}
-            color={isRecording ? '#ffffff' : 'currentColor'}
-          />
+          <Subtitles size={20} />
         </button>
 
         {/* In-Meeting AI Assistant (Desktop) */}
@@ -638,6 +682,26 @@ export const MeetingControls = ({
                 <Circle size={18} fill={isRecording ? '#fff' : 'currentColor'} color={isRecording ? '#fff' : '#ef4444'} />
                 <span style={{ fontSize: '0.86rem' }}>
                   {isRecording ? `Stop REC (${formatTimer(recordingSeconds)})` : 'Record Meeting'}
+                </span>
+              </button>
+
+              {/* Live Speech Subtitles Toggle */}
+              <button
+                onClick={() => {
+                  setShowMobileMore(false);
+                  onToggleLiveSpeech?.();
+                }}
+                className={`btn ${showLiveSpeech ? 'btn-primary' : 'btn-secondary'}`}
+                style={{
+                  padding: '14px',
+                  justifyContent: 'flex-start',
+                  gap: '10px',
+                  borderRadius: '14px'
+                }}
+              >
+                <Subtitles size={18} color={showLiveSpeech ? '#fff' : '#818cf8'} />
+                <span style={{ fontSize: '0.86rem' }}>
+                  {showLiveSpeech ? 'Hide Subtitles' : 'Live Subtitles'}
                 </span>
               </button>
 

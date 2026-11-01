@@ -380,6 +380,15 @@ export const setupSocketIO = (io) => {
       socket.to(roomId).emit('user-typing', { user, isTyping });
     });
 
+    // Real-Time Live Speech Transcription: Interim Words for Fast Feedback
+    socket.on('live-interim-speech', ({ roomId, item }) => {
+      if (!item || !item.text) return;
+      const room = rooms.get(roomId);
+      const sender = room?.users.get(socket.id);
+      if (sender?.isAudioMuted) return;
+      socket.to(roomId).emit('live-interim-speech', { item });
+    });
+
     // Real-Time Live Speech Transcription
     socket.on('live-transcript', async ({ roomId, item }) => {
       if (!item || !item.text) return;

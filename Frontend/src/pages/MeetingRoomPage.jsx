@@ -79,12 +79,20 @@ const PersistentRemoteAudio = ({ socketId, stream, onAutoplayBlocked }) => {
       if (playPromise !== undefined) playPromise.catch(() => {});
     };
 
-    stream.addEventListener('addtrack', handleTrackEvent);
-    stream.addEventListener('removetrack', handleTrackEvent);
+    if (stream && typeof stream.addEventListener === 'function') {
+      try {
+        stream.addEventListener('addtrack', handleTrackEvent);
+        stream.addEventListener('removetrack', handleTrackEvent);
+      } catch (e) {}
+    }
 
     return () => {
-      stream.removeEventListener('addtrack', handleTrackEvent);
-      stream.removeEventListener('removetrack', handleTrackEvent);
+      if (stream && typeof stream.removeEventListener === 'function') {
+        try {
+          stream.removeEventListener('addtrack', handleTrackEvent);
+          stream.removeEventListener('removetrack', handleTrackEvent);
+        } catch (e) {}
+      }
     };
   }, [stream, socketId, onAutoplayBlocked]);
 
@@ -175,8 +183,14 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
     setAutoplayBlocked(false);
   }, []);
 
+  // Live AI Speech Attributed Subtitle Banner
+  const [latestLiveSpeech, setLatestLiveSpeech] = useState(null); // { speaker, text, timestamp, isInterim }
+  const [showLiveSpeech, setShowLiveSpeech] = useState(true);
+  const speechFadeTimeoutRef = useRef(null);
+
   // Recording State
   const [isRecording, setIsRecording] = useState(false);
+  const [isRecordingPaused, setIsRecordingPaused] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [recordingModalOpen, setRecordingModalOpen] = useState(false);
   const [recordingModalMode, setRecordingModalMode] = useState('select'); // 'select' | 'preview'
@@ -622,11 +636,15 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
     const isPolite = socket?.id ? (socket.id > targetSocketId) : !isInitiator;
     peerStatesRef.current[targetSocketId] = { isMakingOffer: false, isPolite };
 
-    // Add local media tracks
+    // Add local media tracks (ensuring screen share track is attached if currently presenting)
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => {
         try {
-          pc.addTrack(track, localStreamRef.current);
+          if (track.kind === 'video' && screenShareTrackRef.current) {
+            pc.addTrack(screenShareTrackRef.current, localStreamRef.current);
+          } else {
+            pc.addTrack(track, localStreamRef.current);
+          }
         } catch (e) {
           console.warn('[WebRTC] addTrack note:', e);
         }
@@ -1042,9 +1060,32 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       }
     });
 
-    // Background AI Speech-to-Text transcript for topic intelligence & post-meeting summary
+    // Real-Time Live Speech Subtitle Stream (Attributed to participant currently speaking)
+    socket.on('live-interim-speech', ({ item }) => {
+      if (item && item.text) {
+        setLatestLiveSpeech(item);
+        if (speechFadeTimeoutRef.current) clearTimeout(speechFadeTimeoutRef.current);
+        speechFadeTimeoutRef.current = setTimeout(() => {
+          setLatestLiveSpeech(prev => (prev?.isInterim ? null : prev));
+        }, 5000);
+      }
+    });
+
+    // Real-Time Final Speech Transcript & Topic Intelligence
     socket.on('transcript-update', (item) => {
       if (!item || !item.text || item.isFinal === false) return;
+
+      // Update Live Floating Subtitle Banner with verified speaker name
+      setLatestLiveSpeech({
+        speaker: item.speaker,
+        text: item.text,
+        isInterim: false,
+        timestamp: item.timestamp
+      });
+      if (speechFadeTimeoutRef.current) clearTimeout(speechFadeTimeoutRef.current);
+      speechFadeTimeoutRef.current = setTimeout(() => {
+        setLatestLiveSpeech(null);
+      }, 7500);
 
       setTranscriptLog(prev => {
         if (item.segmentId && prev.some(t => t.segmentId === item.segmentId)) {
@@ -1221,7 +1262,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
 
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
-      recognition.interimResults = false;
+      recognition.interimResults = true;
       recognition.lang = 'en-US';
 
       const handleFinalTranscript = (finalText) => {
@@ -1255,6 +1296,18 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
           isFinal: true
         };
 
+        // Immediately show final sentence with speaker name on local UI
+        setLatestLiveSpeech({
+          speaker: speakerName,
+          text: cleanText,
+          isInterim: false,
+          timestamp
+        });
+        if (speechFadeTimeoutRef.current) clearTimeout(speechFadeTimeoutRef.current);
+        speechFadeTimeoutRef.current = setTimeout(() => {
+          setLatestLiveSpeech(null);
+        }, 7500);
+
         setTranscriptLog(prev => {
           if (prev.some(t => t.segmentId === segmentId)) return prev;
           const next = [...prev, transcriptItem];
@@ -1269,6 +1322,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
 
       recognition.onresult = (event) => {
         if (isAudioMutedRef.current || isCleaningUpRef.current) return;
+        let interimText = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           const result = event.results[i];
           if (result.isFinal) {
@@ -1276,7 +1330,26 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
             if (text && text.trim()) {
               handleFinalTranscript(text.trim());
             }
+          } else {
+            interimText += result[0].transcript;
           }
+        }
+        if (interimText && interimText.trim()) {
+          const speakerName = confirmedNameRef.current || user?.name || 'You';
+          const interimItem = {
+            speaker: speakerName,
+            text: interimText.trim(),
+            isInterim: true,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          };
+          setLatestLiveSpeech(interimItem);
+          if (socketRef.current) {
+            socketRef.current.emit('live-interim-speech', { roomId, item: interimItem });
+          }
+          if (speechFadeTimeoutRef.current) clearTimeout(speechFadeTimeoutRef.current);
+          speechFadeTimeoutRef.current = setTimeout(() => {
+            setLatestLiveSpeech(prev => (prev?.isInterim ? null : prev));
+          }, 4500);
         }
       };
 
@@ -1372,25 +1445,53 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         return;
       }
 
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+        alert('Screen sharing is not supported by your mobile browser or operating system. Please use Chrome, Edge, or Firefox on a computer.');
+        return;
+      }
+
       try {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-            cursor: 'always',
-            displaySurface: 'monitor'
-          },
-          audio: true // Request tab/system audio where supported
-        });
+        let screenStream;
+        try {
+          screenStream = await navigator.mediaDevices.getDisplayMedia({
+            video: {
+              cursor: 'always',
+              displaySurface: 'monitor'
+            },
+            audio: true
+          });
+        } catch (audioErr) {
+          // Fallback to video-only if audio capture throws or is unsupported
+          screenStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true
+          });
+        }
 
         const screenTrack = screenStream.getVideoTracks()[0];
+        if (!screenTrack) {
+          throw new Error('No screen video track captured.');
+        }
+
         screenShareTrackRef.current = screenTrack;
         setScreenShareStream(screenStream);
         setIsScreenSharing(true);
 
-        // Replace video track for all remote peer connections
+        // Replace or add video track across all remote peer connections
         Object.values(peersRef.current).forEach(pc => {
-          const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+          let sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+          if (!sender) {
+            sender = pc.getSenders().find(s => s.track === null);
+          }
           if (sender) {
-            sender.replaceTrack(screenTrack);
+            sender.replaceTrack(screenTrack).catch(err => {
+              console.warn('[Screen Share replaceTrack note]:', err);
+            });
+          } else {
+            try {
+              pc.addTrack(screenTrack, screenStream);
+            } catch (err) {
+              console.warn('[Screen Share addTrack note]:', err);
+            }
           }
         });
 
@@ -1404,7 +1505,9 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
           stopScreenSharing();
         };
       } catch (err) {
-        console.warn('[Screen Share] Canceled or not supported:', err.message);
+        if (err.name !== 'NotAllowedError') {
+          console.warn('[Screen Share] Canceled or not supported:', err.message);
+        }
       }
     } else {
       stopScreenSharing();
@@ -1413,19 +1516,22 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
 
   const stopScreenSharing = () => {
     if (screenShareTrackRef.current) {
-      screenShareTrackRef.current.stop();
+      try {
+        screenShareTrackRef.current.onended = null;
+        screenShareTrackRef.current.stop();
+      } catch (e) {}
       screenShareTrackRef.current = null;
     }
     setScreenShareStream(null);
     setIsScreenSharing(false);
 
     // Restore original camera track on all peer connections
-    const originalVideoTrack = originalCameraTrackRef.current;
+    const originalVideoTrack = originalCameraTrackRef.current || (localStreamRef.current && localStreamRef.current.getVideoTracks()[0]);
     if (originalVideoTrack) {
       Object.values(peersRef.current).forEach(pc => {
-        const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
+        const sender = pc.getSenders().find(s => s.track && (s.track === screenShareTrackRef.current || s.track.kind === 'video'));
         if (sender) {
-          sender.replaceTrack(originalVideoTrack);
+          sender.replaceTrack(originalVideoTrack).catch(() => {});
         }
       });
     }
@@ -1530,61 +1636,69 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         const ctx = canvas.getContext('2d');
 
         const renderCompositeFrame = () => {
-          // Draw dark meeting background
-          const grad = ctx.createLinearGradient(0, 0, 1280, 720);
-          grad.addColorStop(0, '#070a14');
-          grad.addColorStop(1, '#0e1526');
-          ctx.fillStyle = grad;
-          ctx.fillRect(0, 0, 1280, 720);
+          try {
+            // Draw dark meeting background
+            const grad = ctx.createLinearGradient(0, 0, 1280, 720);
+            grad.addColorStop(0, '#070a14');
+            grad.addColorStop(1, '#0e1526');
+            ctx.fillStyle = grad;
+            ctx.fillRect(0, 0, 1280, 720);
 
-          // If someone is sharing screen, draw screen in center stage
-          const currentPresenterStream = isScreenSharing
-            ? screenShareStream
-            : presenter?.socketId
-            ? remoteStreamsRef.current[presenter.socketId]
-            : null;
+            // If someone is sharing screen, draw screen in center stage
+            const currentPresenterStream = isScreenSharing
+              ? screenShareStream
+              : (presenter?.socketId ? remoteStreamsRef.current[presenter.socketId] : null);
 
-          if (currentPresenterStream) {
-            // Find active video element on stage
-            const stageVideo = document.querySelector('#meeting-stage-container video');
-            if (stageVideo && stageVideo.videoWidth) {
-              const aspect = stageVideo.videoWidth / stageVideo.videoHeight;
-              let drawW = 1240;
-              let drawH = drawW / aspect;
-              if (drawH > 680) {
-                drawH = 680;
-                drawW = drawH * aspect;
+            if (currentPresenterStream) {
+              const stageVideo = document.querySelector('#meeting-stage-container video');
+              if (stageVideo && stageVideo.readyState >= 2 && stageVideo.videoWidth > 0 && stageVideo.videoHeight > 0) {
+                try {
+                  const aspect = stageVideo.videoWidth / stageVideo.videoHeight;
+                  let drawW = 1240;
+                  let drawH = drawW / aspect;
+                  if (drawH > 680) {
+                    drawH = 680;
+                    drawW = drawH * aspect;
+                  }
+                  const drawX = (1280 - drawW) / 2;
+                  const drawY = (720 - drawH) / 2;
+                  ctx.drawImage(stageVideo, drawX, drawY, drawW, drawH);
+                } catch (e) {}
               }
-              const drawX = (1280 - drawW) / 2;
-              const drawY = (720 - drawH) / 2;
-              ctx.drawImage(stageVideo, drawX, drawY, drawW, drawH);
+            } else {
+              // Render video tiles from meeting grid
+              const videoEls = document.querySelectorAll('#meeting-stage-container video');
+              if (videoEls.length === 1) {
+                const v = videoEls[0];
+                if (v && v.readyState >= 2 && v.videoWidth > 0) {
+                  try { ctx.drawImage(v, 160, 40, 960, 640); } catch (e) {}
+                }
+              } else if (videoEls.length >= 2) {
+                const w = 600;
+                const h = 338;
+                if (videoEls[0] && videoEls[0].readyState >= 2 && videoEls[0].videoWidth > 0) {
+                  try { ctx.drawImage(videoEls[0], 25, 190, w, h); } catch (e) {}
+                }
+                if (videoEls[1] && videoEls[1].readyState >= 2 && videoEls[1].videoWidth > 0) {
+                  try { ctx.drawImage(videoEls[1], 655, 190, w, h); } catch (e) {}
+                }
+              }
             }
-          } else {
-            // Render video tiles from meeting grid
-            const videoEls = document.querySelectorAll('#meeting-stage-container video');
-            if (videoEls.length === 1) {
-              const v = videoEls[0];
-              if (v.videoWidth) ctx.drawImage(v, 160, 40, 960, 640);
-            } else if (videoEls.length >= 2) {
-              const w = 600;
-              const h = 338;
-              if (videoEls[0] && videoEls[0].videoWidth) ctx.drawImage(videoEls[0], 25, 190, w, h);
-              if (videoEls[1] && videoEls[1].videoWidth) ctx.drawImage(videoEls[1], 655, 190, w, h);
-            }
-          }
 
-          // Watermark badge: IntellMeet Meeting
-          ctx.fillStyle = 'rgba(10, 15, 26, 0.8)';
-          ctx.fillRect(20, 20, 240, 36);
-          ctx.fillStyle = '#ffffff';
-          ctx.font = 'bold 14px sans-serif';
-          ctx.fillText(`IntellMeet: ${roomId}`, 32, 44);
+            // Watermark badge: IntellMeet Meeting
+            ctx.fillStyle = 'rgba(10, 15, 26, 0.85)';
+            ctx.fillRect(20, 20, 260, 38);
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 14px sans-serif';
+            ctx.fillText(`IntellMeet: ${roomId}`, 32, 44);
+          } catch (e) {}
 
           recordingAnimFrameRef.current = requestAnimationFrame(renderCompositeFrame);
         };
 
         renderCompositeFrame();
-        videoStreamToRecord = canvas.captureStream(30);
+        const captureFn = canvas.captureStream || canvas.mozCaptureStream;
+        videoStreamToRecord = captureFn ? captureFn.call(canvas, 30) : (localStreamRef.current || null);
       }
 
       // 2. Web Audio Multi-Track Mixer
@@ -1742,9 +1856,32 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
     }
   };
 
+  const pauseRecording = () => {
+    if (recordingMediaRecorderRef.current && recordingMediaRecorderRef.current.state === 'recording') {
+      try {
+        recordingMediaRecorderRef.current.pause();
+        setIsRecordingPaused(true);
+      } catch (e) {
+        console.warn('[Recording] pause error:', e);
+      }
+    }
+  };
+
+  const resumeRecording = () => {
+    if (recordingMediaRecorderRef.current && recordingMediaRecorderRef.current.state === 'paused') {
+      try {
+        recordingMediaRecorderRef.current.resume();
+        setIsRecordingPaused(false);
+      } catch (e) {
+        console.warn('[Recording] resume error:', e);
+      }
+    }
+  };
+
   const stopRecording = () => {
     if (recordingMediaRecorderRef.current && recordingMediaRecorderRef.current.state !== 'inactive') {
       recordingMediaRecorderRef.current.stop();
+      setIsRecordingPaused(false);
     }
   };
 
@@ -1952,7 +2089,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
               fontSize: '0.82rem',
               fontWeight: 600
             }}>
-              <span>Presenting: <strong>{isScreenSharing ? 'You' : presenter.name}</strong></span>
+              <span>Presenting: <strong>{isScreenSharing ? 'You' : (presenter?.name || 'Participant')}</strong></span>
             </div>
           )}
         </div>
@@ -2117,11 +2254,68 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
           roomId={roomId}
           meeting={meeting}
           liveTopic={liveTopic}
+          transcriptLog={transcriptLog}
+          latestLiveSpeech={latestLiveSpeech}
           aiAssistantChat={aiAssistantChat}
           onAskAssistant={handleAskAiAssistant}
           isAiThinking={isAiThinking}
         />
       </div>
+
+      {/* Real-Time Live AI Speech Subtitle Banner (Attributed to participant currently speaking) */}
+      {showLiveSpeech && latestLiveSpeech?.text && (
+        <div
+          className="live-speech-subtitle-banner"
+          style={{
+            position: 'absolute',
+            bottom: typeof window !== 'undefined' && window.innerWidth <= 768 ? '86px' : '96px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            maxWidth: typeof window !== 'undefined' && window.innerWidth <= 768 ? '94%' : '760px',
+            width: 'max-content',
+            background: 'rgba(8, 12, 22, 0.94)',
+            backdropFilter: 'blur(20px)',
+            border: '1px solid rgba(99, 102, 241, 0.5)',
+            borderRadius: '24px',
+            padding: typeof window !== 'undefined' && window.innerWidth <= 768 ? '8px 14px' : '10px 22px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.75)',
+            zIndex: 35,
+            pointerEvents: 'auto',
+            animation: 'fadeIn 0.2s ease'
+          }}
+        >
+          <div style={{
+            width: '8px',
+            height: '8px',
+            borderRadius: '50%',
+            background: latestLiveSpeech.isInterim ? '#f59e0b' : '#10b981',
+            boxShadow: latestLiveSpeech.isInterim ? '0 0 10px #f59e0b' : '0 0 10px #10b981',
+            flexShrink: 0
+          }} />
+          <span style={{
+            color: '#818cf8',
+            fontWeight: 700,
+            fontSize: typeof window !== 'undefined' && window.innerWidth <= 768 ? '0.82rem' : '0.9rem',
+            whiteSpace: 'nowrap'
+          }}>
+            {latestLiveSpeech.speaker}:
+          </span>
+          <span style={{
+            color: latestLiveSpeech.isInterim ? '#cbd5e1' : '#ffffff',
+            fontSize: typeof window !== 'undefined' && window.innerWidth <= 768 ? '0.82rem' : '0.9rem',
+            fontWeight: 500,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: typeof window !== 'undefined' && window.innerWidth <= 768 ? 'nowrap' : 'normal',
+            maxWidth: typeof window !== 'undefined' && window.innerWidth <= 768 ? '230px' : '580px'
+          }}>
+            "{latestLiveSpeech.text}"
+          </span>
+        </div>
+      )}
 
       {/* Bottom Meeting Controls Dock */}
       <MeetingControls
@@ -2132,8 +2326,13 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         isScreenSharing={isScreenSharing}
         onToggleScreenShare={toggleScreenShare}
         isRecording={isRecording}
+        isRecordingPaused={isRecordingPaused}
+        onPauseRecording={pauseRecording}
+        onResumeRecording={resumeRecording}
         recordingSeconds={recordingSeconds}
         onToggleRecording={handleOpenRecordingDialog}
+        showLiveSpeech={showLiveSpeech}
+        onToggleLiveSpeech={() => setShowLiveSpeech(v => !v)}
         isHandRaised={isHandRaised}
         onToggleHand={toggleHand}
         activeTab={activeTab}

@@ -47,6 +47,8 @@ export const MeetingSideDrawer = ({
   roomId,
   meeting,
   liveTopic = null,
+  transcriptLog = [],
+  latestLiveSpeech = null,
   aiAssistantChat = [],
   onAskAssistant,
   isAiThinking = false
@@ -180,12 +182,14 @@ export const MeetingSideDrawer = ({
         justifyContent: 'space-between'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {activeTab === 'conversation' && <FileText size={18} color="#10b981" />}
           {activeTab === 'assistant' && <Sparkles size={18} color="#c084fc" />}
           {activeTab === 'chat' && <MessageSquare size={18} color="#818cf8" />}
           {activeTab === 'participants' && <Users size={18} color="#818cf8" />}
           {activeTab === 'notes' && <Edit3 size={18} color="#818cf8" />}
           {activeTab === 'info' && <Info size={18} color="#818cf8" />}
           <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#ffffff', margin: 0 }}>
+            {activeTab === 'conversation' && 'Live AI Speech Feed'}
             {activeTab === 'assistant' && 'AI Meeting Assistant'}
             {activeTab === 'chat' && 'In-Meeting Chat'}
             {activeTab === 'participants' && `Participants (${allParticipants.length})`}
@@ -746,6 +750,75 @@ export const MeetingSideDrawer = ({
           >
             {copiedLink ? 'Copied Join Link!' : 'Copy Shareable Link'}
           </button>
+        </div>
+      )}
+
+      {/* ---------------- LIVE AI SPEECH / CONVERSATION FEED TAB ---------------- */}
+      {activeTab === 'conversation' && (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ padding: '12px 16px', background: 'rgba(16, 185, 129, 0.08)', borderBottom: '1px solid rgba(16, 185, 129, 0.2)', fontSize: '0.8rem', color: '#6ee7b7', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981', boxShadow: '0 0 8px #10b981' }} />
+            <span>Real-time verbatim conversation stream with speaker identification</span>
+          </div>
+
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {transcriptLog.length === 0 && !latestLiveSpeech ? (
+              <div style={{ textAlign: 'center', color: 'var(--text-dim)', padding: '40px 16px', fontSize: '0.88rem' }}>
+                <FileText size={32} color="#10b981" style={{ margin: '0 auto 12px', opacity: 0.7 }} />
+                <p style={{ fontWeight: 600, color: '#e2e8f0', marginBottom: '4px' }}>No speech recorded yet</p>
+                <p style={{ fontSize: '0.8rem' }}>When participants speak with an unmuted microphone, their speech turns will appear here in real time.</p>
+              </div>
+            ) : (
+              <>
+                {transcriptLog.map((turn, i) => (
+                  <div
+                    key={turn.segmentId || i}
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.03)',
+                      border: '1px solid rgba(255, 255, 255, 0.07)',
+                      borderRadius: '12px',
+                      padding: '12px 14px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                      <span style={{ fontWeight: 700, fontSize: '0.88rem', color: '#818cf8' }}>
+                        {turn.speaker}
+                      </span>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
+                        {turn.timestamp}
+                      </span>
+                    </div>
+                    <p style={{ color: '#f1f5f9', fontSize: '0.88rem', lineHeight: 1.5, margin: 0 }}>
+                      "{turn.text}"
+                    </p>
+                  </div>
+                ))}
+
+                {/* Real-time active turn if currently speaking */}
+                {latestLiveSpeech?.isInterim && latestLiveSpeech?.text && (
+                  <div
+                    style={{
+                      background: 'rgba(245, 158, 11, 0.08)',
+                      border: '1px solid rgba(245, 158, 11, 0.3)',
+                      borderRadius: '12px',
+                      padding: '12px 14px',
+                      animation: 'pulse 1.5s infinite'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#f59e0b' }} />
+                      <span style={{ fontWeight: 700, fontSize: '0.88rem', color: '#f59e0b' }}>
+                        {latestLiveSpeech.speaker} (Speaking now...)
+                      </span>
+                    </div>
+                    <p style={{ color: '#cbd5e1', fontSize: '0.88rem', lineHeight: 1.5, margin: 0, fontStyle: 'italic' }}>
+                      "{latestLiveSpeech.text}"
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
       )}
     </aside>

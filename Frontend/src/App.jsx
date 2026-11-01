@@ -12,38 +12,56 @@ import { AnalyticsPage } from './pages/AnalyticsPage.jsx';
 import { DocsPage } from './pages/DocsPage.jsx';
 
 /**
- * Client-Side Router with Full Browser History & Back/Forward Support
+ * Client-Side Router with Full Browser History, Back/Forward Support & Unique User ID in URL
  */
-const parseRouteFromHash = (hashString) => {
+const parseRouteFromHash = (hashString, defaultUserId = null) => {
   const clean = (hashString || '').replace(/^#\/?/, '').trim();
-  if (!clean) return { tab: 'dashboard', roomId: null, summaryId: null };
+  if (!clean) return { tab: 'dashboard', roomId: null, summaryId: null, userId: defaultUserId };
 
-  if (clean.startsWith('room/')) {
-    const roomId = clean.replace('room/', '').trim();
-    return { tab: 'meetings', roomId: roomId || null, summaryId: null };
+  let remaining = clean;
+  let parsedUserId = defaultUserId;
+
+  // Check if hash starts with u/:userId/
+  if (remaining.startsWith('u/')) {
+    const afterU = remaining.slice(2);
+    const slashIdx = afterU.indexOf('/');
+    if (slashIdx !== -1) {
+      parsedUserId = afterU.slice(0, slashIdx).trim();
+      remaining = afterU.slice(slashIdx + 1).trim();
+    } else {
+      parsedUserId = afterU.trim();
+      remaining = '';
+    }
   }
-  if (clean.startsWith('summary/')) {
+
+  if (remaining.startsWith('room/')) {
+    const roomId = remaining.replace('room/', '').trim();
+    return { tab: 'meetings', roomId: roomId || null, summaryId: null, userId: parsedUserId };
+  }
+  if (remaining.startsWith('summary/')) {
     const summaryId = clean.replace('summary/', '').trim();
-    return { tab: 'meetings', roomId: null, summaryId: summaryId || null };
+    return { tab: 'meetings', roomId: null, summaryId: summaryId || null, userId: parsedUserId };
   }
 
   const validTabs = ['dashboard', 'meetings', 'kanban', 'analytics', 'docs'];
-  if (validTabs.includes(clean)) {
-    return { tab: clean, roomId: null, summaryId: null };
+  if (validTabs.includes(remaining)) {
+    return { tab: remaining, roomId: null, summaryId: null, userId: parsedUserId };
   }
 
-  return { tab: 'dashboard', roomId: null, summaryId: null };
+  return { tab: 'dashboard', roomId: null, summaryId: null, userId: parsedUserId };
 };
 
 export const App = () => {
-  const { isAuthenticated, loading } = useAuth();
+  const { user, isAuthenticated, loading } = useAuth();
+
+  const userPermanentId = user?.userId || (user?._id ? `USR-${user._id.toString().slice(-6).toUpperCase()}` : null);
 
   // Route state initialized from current URL hash
   const [routeState, setRouteState] = useState(() => {
     if (typeof window !== 'undefined') {
       return parseRouteFromHash(window.location.hash);
     }
-    return { tab: 'dashboard', roomId: null, summaryId: null };
+    return { tab: 'dashboard', roomId: null, summaryId: null, userId: null };
   });
 
   const { tab: activeTab, roomId: activeRoomId, summaryId: summaryMeetingId } = routeState;
@@ -51,22 +69,23 @@ export const App = () => {
   // Browser History & Navigation Manager
   const navigate = useCallback((target, options = {}) => {
     const { replace = false } = options;
-    let newHash = '#/dashboard';
+    const currentUserId = userPermanentId || 'USR-ONLINE';
+    let targetPath = 'dashboard';
 
     if (typeof target === 'string') {
-      newHash = `"#/${target}`;
-      if (newHash.startsWith('"')) newHash = newHash.slice(1);
+      targetPath = target.replace(/^#\/?/, '').replace(/^u\/[^/]+\/?/, '');
     } else if (target && typeof target === 'object') {
       if (target.roomId) {
-        newHash = `#/room/${target.roomId}`;
+        targetPath = `room/${target.roomId}`;
       } else if (target.summaryId) {
-        newHash = `#/summary/${target.summaryId}`;
+        targetPath = `summary/${target.summaryId}`;
       } else if (target.tab) {
-        newHash = `#/${target.tab}`;
+        targetPath = target.tab;
       }
     }
 
-    const nextState = parseRouteFromHash(newHash);
+    const newHash = `#/u/${currentUserId}/${targetPath}`;
+    const nextState = parseRouteFromHash(newHash, currentUserId);
 
     if (typeof window !== 'undefined' && window.history) {
       if (replace) {
@@ -80,30 +99,45 @@ export const App = () => {
     if (typeof window !== 'undefined') {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
-  }, []);
+  }, [userPermanentId]);
+
+  // Synchronize URL with logged-in user's unique permanent ID
+  useEffect(() => {
+    if (!isAuthenticated || !userPermanentId || typeof window === 'undefined') return;
+
+    const currentHash = window.location.hash || '';
+    const parsed = parseRouteFromHash(currentHash, userPermanentId);
+
+    // If URL does not have the user's permanent ID, normalize it
+    const expectedPrefix = `#/u/${userPermanentId}/`;
+    if (!currentHash.startsWith(expectedPrefix)) {
+      let targetPath = 'dashboard';
+      if (parsed.roomId) {
+        targetPath = `room/${parsed.roomId}`;
+      } else if (parsed.summaryId) {
+        targetPath = `summary/${parsed.summaryId}`;
+      } else if (parsed.tab) {
+        targetPath = parsed.tab;
+      }
+      navigate(targetPath, { replace: true });
+    }
+  }, [isAuthenticated, userPermanentId, navigate]);
 
   // Listen to Browser Back / Forward buttons and URL hash changes
   useEffect(() => {
-    const handlePopState = (e) => {
-      const parsed = parseRouteFromHash(window.location.hash);
+    const handlePopState = () => {
+      const parsed = parseRouteFromHash(window.location.hash, userPermanentId);
       setRouteState(parsed);
     };
 
     window.addEventListener('popstate', handlePopState);
     window.addEventListener('hashchange', handlePopState);
 
-    // Initial URL sync if authenticated and hash is empty
-    if (isAuthenticated && typeof window !== 'undefined') {
-      if (!window.location.hash || window.location.hash === '#/' || window.location.hash === '#') {
-        navigate('dashboard', { replace: true });
-      }
-    }
-
     return () => {
       window.removeEventListener('popstate', handlePopState);
       window.removeEventListener('hashchange', handlePopState);
     };
-  }, [isAuthenticated, navigate]);
+  }, [userPermanentId]);
 
   if (loading) {
     return (
@@ -131,7 +165,7 @@ export const App = () => {
   if (activeRoomId) {
     return (
       <div style={{ position: 'relative', minHeight: '100vh', background: '#070a12' }}>
-        <ErrorBoundary onNavigateHome={() => navigate('dashboard')}>
+        <ErrorBoundary resetKey={`room-${activeRoomId}`} onNavigateHome={() => navigate('dashboard')}>
           <MeetingRoomPage
             roomId={activeRoomId}
             onLeaveRoom={() => {
@@ -159,7 +193,7 @@ export const App = () => {
           activeTab={activeTab}
           setActiveTab={(tab) => navigate(tab)}
         />
-        <ErrorBoundary onNavigateHome={() => navigate('dashboard')}>
+        <ErrorBoundary resetKey={`summary-${summaryMeetingId}`} onNavigateHome={() => navigate('dashboard')}>
           <PostMeetingDetailsPage
             meetingIdOrCode={summaryMeetingId}
             onBack={() => navigate('dashboard')}
@@ -182,7 +216,7 @@ export const App = () => {
 
       {/* Main Routed Page with Native Browser Navigation */}
       <main style={{ position: 'relative', zIndex: 1 }}>
-        <ErrorBoundary onNavigateHome={() => navigate('dashboard')}>
+        <ErrorBoundary resetKey={`tab-${activeTab}`} onNavigateHome={() => navigate('dashboard')}>
           {activeTab === 'dashboard' && (
             <DashboardPage
               onJoinMeeting={(code) => navigate({ roomId: code })}
