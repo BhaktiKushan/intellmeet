@@ -28,7 +28,6 @@ export const ParticipantTile = ({
   aspectRatio = '16/9'
 }) => {
   const videoRef = useRef(null);
-  const audioRef = useRef(null);
   const [showMenu, setShowMenu] = useState(false);
   const [isAudioElementMuted, setIsAudioElementMuted] = useState(false);
 
@@ -41,6 +40,16 @@ export const ParticipantTile = ({
     try {
       stream.addEventListener('addtrack', handleTracks);
       stream.addEventListener('removetrack', handleTracks);
+      const audioTracks = stream.getAudioTracks ? stream.getAudioTracks() : [];
+      const videoTracks = stream.getVideoTracks ? stream.getVideoTracks() : [];
+      audioTracks.forEach(t => {
+        t.addEventListener('unmute', handleTracks);
+        t.addEventListener('ended', handleTracks);
+      });
+      videoTracks.forEach(t => {
+        t.addEventListener('unmute', handleTracks);
+        t.addEventListener('ended', handleTracks);
+      });
     } catch (e) {}
     return () => {
       try {
@@ -50,33 +59,28 @@ export const ParticipantTile = ({
     };
   }, [stream]);
 
-  useEffect(() => {
-    if (videoRef.current && stream) {
-      if (videoRef.current.srcObject !== stream) {
-        videoRef.current.srcObject = stream;
-      }
-      videoRef.current.play().catch(() => {});
-    }
-    if (audioRef.current && stream && !isLocal) {
-      if (audioRef.current.srcObject !== stream) {
-        audioRef.current.srcObject = stream;
-      }
-      audioRef.current.play().catch((err) => {
-        console.warn('[Remote Audio] Autoplay note:', err);
-      });
-    }
-  }, [stream, isLocal]);
-
   const hasVideoStream = Boolean(stream && typeof stream.getVideoTracks === 'function' && stream.getVideoTracks().length > 0 && !peer.isVideoOff);
   const isSpeaking = peer.isSpeaking && !peer.isAudioMuted;
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (el && stream) {
+      if (el.srcObject !== stream) {
+        el.srcObject = stream;
+      }
+      el.play().catch(() => {});
+    }
+  }, [stream, isLocal, hasVideoStream]);
 
   // Toggle local speaker audio for this specific remote peer
   const toggleMutePeerAudio = (e) => {
     e.stopPropagation();
     const nextMuted = !isAudioElementMuted;
     setIsAudioElementMuted(nextMuted);
-    if (audioRef.current) {
-      audioRef.current.muted = nextMuted;
+    if (stream && typeof stream.getAudioTracks === 'function') {
+      stream.getAudioTracks().forEach(t => {
+        t.enabled = !nextMuted;
+      });
     }
   };
 
@@ -110,20 +114,18 @@ export const ParticipantTile = ({
         userSelect: 'none'
       }}
     >
-      {/* Dedicated Remote Audio Playback Element */}
-      {!isLocal && (
-        <audio
-          ref={audioRef}
-          autoPlay
-          playsInline
-          muted={isAudioElementMuted}
-        />
-      )}
-
-      {/* Video Element (Video display only; audio handled by dedicated audio element) */}
+      {/* Video Element (Direct hardware-accelerated video rendering) */}
       <video
         key={`video-elem-${peer.socketId}`}
-        ref={videoRef}
+        ref={(el) => {
+          videoRef.current = el;
+          if (el && stream) {
+            if (el.srcObject !== stream) {
+              el.srcObject = stream;
+            }
+            el.play().catch(() => {});
+          }
+        }}
         autoPlay
         playsInline
         muted={true}

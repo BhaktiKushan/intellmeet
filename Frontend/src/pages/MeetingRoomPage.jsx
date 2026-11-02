@@ -65,19 +65,28 @@ const PersistentRemoteAudio = ({ socketId, stream, onAutoplayBlocked }) => {
       el.srcObject = stream;
     }
 
-    const p = el.play();
-    if (p !== undefined) {
-      p.catch((err) => {
-        if (err.name === 'NotAllowedError') {
-          onAutoplayBlocked?.(true);
-        }
-      });
-    }
+    const playAudio = () => {
+      const p = el.play();
+      if (p !== undefined) {
+        p.catch((err) => {
+          if (err.name === 'NotAllowedError') {
+            onAutoplayBlocked?.(true);
+          }
+        });
+      }
+    };
+
+    playAudio();
 
     const handleTrackEvent = () => {
-      const playPromise = el.play();
-      if (playPromise !== undefined) playPromise.catch(() => {});
+      playAudio();
     };
+
+    const audioTracks = (stream && typeof stream.getAudioTracks === 'function') ? stream.getAudioTracks() : [];
+    audioTracks.forEach(t => {
+      t.addEventListener('unmute', handleTrackEvent);
+      t.addEventListener('ended', handleTrackEvent);
+    });
 
     if (stream && typeof stream.addEventListener === 'function') {
       try {
@@ -87,6 +96,12 @@ const PersistentRemoteAudio = ({ socketId, stream, onAutoplayBlocked }) => {
     }
 
     return () => {
+      audioTracks.forEach(t => {
+        try {
+          t.removeEventListener('unmute', handleTrackEvent);
+          t.removeEventListener('ended', handleTrackEvent);
+        } catch (e) {}
+      });
       if (stream && typeof stream.removeEventListener === 'function') {
         try {
           stream.removeEventListener('addtrack', handleTrackEvent);
@@ -101,7 +116,15 @@ const PersistentRemoteAudio = ({ socketId, stream, onAutoplayBlocked }) => {
       ref={audioRef}
       autoPlay
       playsInline
-      style={{ display: 'none' }}
+      style={{
+        position: 'fixed',
+        width: '1px',
+        height: '1px',
+        opacity: 0,
+        pointerEvents: 'none',
+        top: '-100px',
+        left: '-100px'
+      }}
       aria-hidden="true"
     />
   );
@@ -373,19 +396,36 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
   useEffect(() => {
     localStreamRef.current = localStream;
     if (localStream) {
-      Object.values(peersRef.current).forEach(pc => {
+      Object.entries(peersRef.current).forEach(([targetSocketId, pc]) => {
         if (pc.signalingState === 'closed') return;
-        const senders = pc.getSenders();
+        const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
+        let needsRenegotiation = false;
+
         localStream.getTracks().forEach(track => {
           // If screen sharing is active, do not overwrite the active screen share video track
           if (track.kind === 'video' && screenShareTrackRef.current) return;
-          const sender = senders.find(s => s.track && s.track.kind === track.kind);
-          if (sender) {
-            sender.replaceTrack(track).catch(() => {});
+          const tr = transceivers.find(t => t.sender?.track?.kind === track.kind || t.receiver?.track?.kind === track.kind);
+          if (tr) {
+            if (tr.direction !== 'sendrecv') {
+              tr.direction = 'sendrecv';
+              needsRenegotiation = true;
+            }
+            if (tr.sender) {
+              tr.sender.replaceTrack(track).catch(err => {
+                console.warn(`[WebRTC] replaceTrack error (${targetSocketId}):`, err);
+              });
+            }
           } else {
-            try { pc.addTrack(track, localStream); } catch (e) {}
+            try {
+              pc.addTrack(track, localStream);
+              needsRenegotiation = true;
+            } catch (e) {}
           }
         });
+
+        if (needsRenegotiation && pc.signalingState === 'stable' && peerOffersRef.current[targetSocketId]) {
+          peerOffersRef.current[targetSocketId]();
+        }
       });
     }
   }, [localStream]);
@@ -473,8 +513,8 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
     const initMedia = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: selectedVideoDeviceId ? { deviceId: { exact: selectedVideoDeviceId } } : true,
-          audio: selectedAudioDeviceId ? { deviceId: { exact: selectedAudioDeviceId } } : true
+          video: selectedVideoDeviceId ? { deviceId: { ideal: selectedVideoDeviceId } } : true,
+          audio: selectedAudioDeviceId ? { deviceId: { ideal: selectedAudioDeviceId } } : true
         });
         activeStream = stream;
         setLocalStream(stream);
@@ -485,8 +525,41 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
         setPermissionError(null);
         await updateDeviceList();
       } catch (err) {
-        console.warn('[Media Init] Could not access user media:', err.message);
-        setPermissionError(err.message || 'Camera or microphone access denied');
+        console.warn('[Media Init] Combined media request failed, trying audio-only fallback:', err.message);
+        try {
+          // Fallback 1: Capture audio only
+          const audioStream = await navigator.mediaDevices.getUserMedia({
+            audio: selectedAudioDeviceId ? { deviceId: { ideal: selectedAudioDeviceId } } : true,
+            video: false
+          });
+          activeStream = audioStream;
+          setLocalStream(audioStream);
+          localStreamRef.current = audioStream;
+          setIsVideoOff(true);
+          setPermissionError(null);
+          await updateDeviceList();
+        } catch (audioErr) {
+          console.warn('[Media Init] Audio-only fallback failed, trying video-only fallback:', audioErr.message);
+          try {
+            // Fallback 2: Capture video only
+            const videoStream = await navigator.mediaDevices.getUserMedia({
+              video: selectedVideoDeviceId ? { deviceId: { ideal: selectedVideoDeviceId } } : true,
+              audio: false
+            });
+            activeStream = videoStream;
+            setLocalStream(videoStream);
+            localStreamRef.current = videoStream;
+            if (videoStream.getVideoTracks().length > 0) {
+              originalCameraTrackRef.current = videoStream.getVideoTracks()[0];
+            }
+            setIsAudioMuted(true);
+            setPermissionError(null);
+            await updateDeviceList();
+          } catch (videoErr) {
+            console.warn('[Media Init] All media capture attempts failed:', videoErr.message);
+            setPermissionError(err.message || 'Camera or microphone access denied');
+          }
+        }
       }
     };
 
@@ -505,7 +578,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
     if (!localStream) return;
     try {
       const newStream = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: { exact: deviceId } },
+        video: { deviceId: { ideal: deviceId } },
         audio: false
       });
       const newVideoTrack = newStream.getVideoTracks()[0];
@@ -520,8 +593,15 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
 
       // Update peer connections
       Object.values(peersRef.current).forEach(pc => {
-        const sender = pc.getSenders().find(s => s.track && s.track.kind === 'video');
-        if (sender) sender.replaceTrack(newVideoTrack);
+        if (pc.signalingState === 'closed') return;
+        const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
+        const tr = transceivers.find(t => t.sender?.track?.kind === 'video' || t.receiver?.track?.kind === 'video');
+        if (tr) {
+          tr.direction = 'sendrecv';
+          if (tr.sender) tr.sender.replaceTrack(newVideoTrack).catch(() => {});
+        } else {
+          try { pc.addTrack(newVideoTrack, localStream); } catch (e) {}
+        }
       });
 
       setLocalStream(new MediaStream(localStream.getTracks()));
@@ -536,7 +616,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
     if (!localStream) return;
     try {
       const newStream = await navigator.mediaDevices.getUserMedia({
-        audio: { deviceId: { exact: deviceId } },
+        audio: { deviceId: { ideal: deviceId } },
         video: false
       });
       const newAudioTrack = newStream.getAudioTracks()[0];
@@ -550,8 +630,15 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
 
       // Update peer connections
       Object.values(peersRef.current).forEach(pc => {
-        const sender = pc.getSenders().find(s => s.track && s.track.kind === 'audio');
-        if (sender) sender.replaceTrack(newAudioTrack);
+        if (pc.signalingState === 'closed') return;
+        const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
+        const tr = transceivers.find(t => t.sender?.track?.kind === 'audio' || t.receiver?.track?.kind === 'audio');
+        if (tr) {
+          tr.direction = 'sendrecv';
+          if (tr.sender) tr.sender.replaceTrack(newAudioTrack).catch(() => {});
+        } else {
+          try { pc.addTrack(newAudioTrack, localStream); } catch (e) {}
+        }
       });
 
       setLocalStream(new MediaStream(localStream.getTracks()));
@@ -682,8 +769,11 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
           if (existing) {
             if (!existing.getTracks().some(t => t.id === event.track.id)) {
               existing.addTrack(event.track);
+              updatedStream = new MediaStream(existing.getTracks());
+              return { ...prev, [targetSocketId]: updatedStream };
             }
-            updatedStream = new MediaStream(existing.getTracks());
+            // Track is already attached to existing MediaStream; keep stream reference stable
+            return prev;
           } else {
             const incomingStream = event.streams && event.streams[0];
             if (incomingStream) {
@@ -691,8 +781,8 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
             } else {
               updatedStream = new MediaStream([event.track]);
             }
+            return { ...prev, [targetSocketId]: updatedStream };
           }
-          return { ...prev, [targetSocketId]: updatedStream };
         });
       };
 
@@ -1404,51 +1494,137 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
   // ----------------------------------------------------
   // Audio & Video Toggles
   // ----------------------------------------------------
-  const toggleAudio = () => {
-    const stream = localStreamRef.current;
-    if (stream) {
+  const toggleAudio = async () => {
+    let stream = localStreamRef.current;
+    if (stream && stream.getAudioTracks().length > 0) {
       const audioTrack = stream.getAudioTracks()[0];
-      if (audioTrack) {
-        const nextEnabled = !audioTrack.enabled;
-        audioTrack.enabled = nextEnabled;
-        const nextMuted = !nextEnabled;
-        setIsAudioMuted(nextMuted);
-        isAudioMutedRef.current = nextMuted;
+      const nextEnabled = !audioTrack.enabled;
+      audioTrack.enabled = nextEnabled;
+      const nextMuted = !nextEnabled;
+      setIsAudioMuted(nextMuted);
+      isAudioMutedRef.current = nextMuted;
 
-        if (nextMuted) {
-          if (recognitionRef.current) {
-            try { recognitionRef.current.abort(); } catch (e) {}
+      if (nextMuted) {
+        if (recognitionRef.current) {
+          try { recognitionRef.current.abort(); } catch (e) {}
+        }
+      } else {
+        if (isSpeechRecognitionActiveRef.current && socketRef.current) {
+          initSpeechRecognition(socketRef.current);
+        }
+      }
+
+      if (socketRef.current) {
+        socketRef.current.emit('toggle-media', { roomId, type: 'audio', enabled: nextEnabled });
+      }
+    } else {
+      // Stream lacks audio track: dynamically acquire microphone
+      try {
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          audio: selectedAudioDeviceId ? { deviceId: { ideal: selectedAudioDeviceId } } : true,
+          video: false
+        });
+        const newAudioTrack = newStream.getAudioTracks()[0];
+        if (newAudioTrack) {
+          if (!stream) {
+            stream = new MediaStream([newAudioTrack]);
+            setLocalStream(stream);
+            localStreamRef.current = stream;
+          } else {
+            stream.addTrack(newAudioTrack);
+            setLocalStream(new MediaStream(stream.getTracks()));
           }
-        } else {
+          setIsAudioMuted(false);
+          isAudioMutedRef.current = false;
+
+          Object.values(peersRef.current).forEach(pc => {
+            if (pc.signalingState === 'closed') return;
+            const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
+            const tr = transceivers.find(t => t.sender?.track?.kind === 'audio' || t.receiver?.track?.kind === 'audio');
+            if (tr) {
+              tr.direction = 'sendrecv';
+              tr.sender?.replaceTrack(newAudioTrack).catch(() => {});
+            } else {
+              try { pc.addTrack(newAudioTrack, stream); } catch (e) {}
+            }
+          });
+
+          if (socketRef.current) {
+            socketRef.current.emit('toggle-media', { roomId, type: 'audio', enabled: true });
+          }
           if (isSpeechRecognitionActiveRef.current && socketRef.current) {
             initSpeechRecognition(socketRef.current);
           }
         }
-
-        if (socketRef.current) {
-          socketRef.current.emit('toggle-media', { roomId, type: 'audio', enabled: nextEnabled });
-        }
+      } catch (err) {
+        console.warn('[Microphone] Dynamic capture note:', err.message);
+        const nextMuted = !isAudioMuted;
+        setIsAudioMuted(nextMuted);
+        isAudioMutedRef.current = nextMuted;
       }
-    } else {
-      const nextMuted = !isAudioMuted;
-      setIsAudioMuted(nextMuted);
-      isAudioMutedRef.current = nextMuted;
     }
   };
 
-  const toggleVideo = () => {
-    const stream = localStreamRef.current;
-    if (stream) {
+  const toggleVideo = async () => {
+    let stream = localStreamRef.current;
+    if (stream && stream.getVideoTracks().length > 0) {
       const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled;
-        setIsVideoOff(!videoTrack.enabled);
-        if (socketRef.current) {
-          socketRef.current.emit('toggle-media', { roomId, type: 'video', enabled: videoTrack.enabled });
+      const nextEnabled = !videoTrack.enabled;
+      videoTrack.enabled = nextEnabled;
+      setIsVideoOff(!nextEnabled);
+
+      Object.values(peersRef.current).forEach(pc => {
+        if (pc.signalingState === 'closed') return;
+        const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
+        const tr = transceivers.find(t => t.sender?.track?.kind === 'video' || t.receiver?.track?.kind === 'video');
+        if (tr && !screenShareTrackRef.current) {
+          tr.direction = nextEnabled ? 'sendrecv' : 'recvonly';
         }
+      });
+
+      if (socketRef.current) {
+        socketRef.current.emit('toggle-media', { roomId, type: 'video', enabled: nextEnabled });
       }
     } else {
-      setIsVideoOff(!isVideoOff);
+      // Stream lacks video track: dynamically acquire camera
+      try {
+        const newStream = await navigator.mediaDevices.getUserMedia({
+          video: selectedVideoDeviceId ? { deviceId: { ideal: selectedVideoDeviceId } } : true,
+          audio: false
+        });
+        const newVideoTrack = newStream.getVideoTracks()[0];
+        if (newVideoTrack) {
+          originalCameraTrackRef.current = newVideoTrack;
+          if (!stream) {
+            stream = new MediaStream([newVideoTrack]);
+            setLocalStream(stream);
+            localStreamRef.current = stream;
+          } else {
+            stream.addTrack(newVideoTrack);
+            setLocalStream(new MediaStream(stream.getTracks()));
+          }
+          setIsVideoOff(false);
+
+          Object.values(peersRef.current).forEach(pc => {
+            if (pc.signalingState === 'closed') return;
+            const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
+            const tr = transceivers.find(t => t.sender?.track?.kind === 'video' || t.receiver?.track?.kind === 'video');
+            if (tr) {
+              tr.direction = 'sendrecv';
+              tr.sender?.replaceTrack(newVideoTrack).catch(() => {});
+            } else {
+              try { pc.addTrack(newVideoTrack, stream); } catch (e) {}
+            }
+          });
+
+          if (socketRef.current) {
+            socketRef.current.emit('toggle-media', { roomId, type: 'video', enabled: true });
+          }
+        }
+      } catch (err) {
+        console.warn('[Camera] Dynamic capture note:', err.message);
+        setIsVideoOff(!isVideoOff);
+      }
     }
   };
 
@@ -2161,7 +2337,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
       </header>
 
       {/* Persistent Global Audio Mesh: guarantees remote voices never drop during pagination, grid changes, or screen resizing */}
-      <div style={{ display: 'none' }} aria-hidden="true">
+      <div style={{ position: 'fixed', width: '1px', height: '1px', opacity: 0, pointerEvents: 'none', top: '-100px', left: '-100px' }} aria-hidden="true">
         {Object.entries(remoteStreams).map(([sId, stream]) => (
           <PersistentRemoteAudio
             key={sId}

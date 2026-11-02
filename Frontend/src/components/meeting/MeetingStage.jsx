@@ -208,7 +208,7 @@ export const MeetingStage = ({
               }}
               autoPlay
               playsInline
-              muted={isPresenterLocal}
+              muted={true}
               style={{
                 width: '100%',
                 height: '100%',
