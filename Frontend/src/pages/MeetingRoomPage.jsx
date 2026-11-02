@@ -396,32 +396,55 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
   useEffect(() => {
     localStreamRef.current = localStream;
     if (localStream) {
+      const audioTrack = localStream.getAudioTracks()[0];
+      const videoTrack = screenShareTrackRef.current || localStream.getVideoTracks()[0];
+
       Object.entries(peersRef.current).forEach(([targetSocketId, pc]) => {
         if (pc.signalingState === 'closed') return;
         const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
         let needsRenegotiation = false;
 
-        localStream.getTracks().forEach(track => {
-          // If screen sharing is active, do not overwrite the active screen share video track
-          if (track.kind === 'video' && screenShareTrackRef.current) return;
-          const tr = transceivers.find(t => t.sender?.track?.kind === track.kind || t.receiver?.track?.kind === track.kind);
-          if (tr) {
-            if (tr.direction !== 'sendrecv') {
-              tr.direction = 'sendrecv';
+        // 1. Sync Audio Track
+        if (audioTrack) {
+          const audioTr = transceivers.find(t => t.sender?.track?.kind === 'audio' || (!t.sender?.track && t.receiver?.track?.kind === 'audio'));
+          if (audioTr) {
+            if (audioTr.direction !== 'sendrecv') {
+              audioTr.direction = 'sendrecv';
               needsRenegotiation = true;
             }
-            if (tr.sender) {
-              tr.sender.replaceTrack(track).catch(err => {
-                console.warn(`[WebRTC] replaceTrack error (${targetSocketId}):`, err);
+            if (audioTr.sender && audioTr.sender.track !== audioTrack) {
+              audioTr.sender.replaceTrack(audioTrack).catch(err => {
+                console.warn(`[WebRTC] replace audio track warning (${targetSocketId}):`, err);
               });
             }
           } else {
             try {
-              pc.addTrack(track, localStream);
+              pc.addTrack(audioTrack, localStream);
               needsRenegotiation = true;
             } catch (e) {}
           }
-        });
+        }
+
+        // 2. Sync Video Track
+        if (videoTrack) {
+          const videoTr = transceivers.find(t => t.sender?.track?.kind === 'video' || (!t.sender?.track && t.receiver?.track?.kind === 'video'));
+          if (videoTr) {
+            if (videoTr.direction !== 'sendrecv') {
+              videoTr.direction = 'sendrecv';
+              needsRenegotiation = true;
+            }
+            if (videoTr.sender && videoTr.sender.track !== videoTrack) {
+              videoTr.sender.replaceTrack(videoTrack).catch(err => {
+                console.warn(`[WebRTC] replace video track warning (${targetSocketId}):`, err);
+              });
+            }
+          } else {
+            try {
+              pc.addTrack(videoTrack, localStream);
+              needsRenegotiation = true;
+            } catch (e) {}
+          }
+        }
 
         if (needsRenegotiation && pc.signalingState === 'stable' && peerOffersRef.current[targetSocketId]) {
           peerOffersRef.current[targetSocketId]();
@@ -726,37 +749,44 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
     const isPolite = socket?.id ? (socket.id > targetSocketId) : !isInitiator;
     peerStatesRef.current[targetSocketId] = { isMakingOffer: false, isPolite };
 
-    // Add local media tracks (ensuring screen share track is attached if currently presenting)
-    if (screenShareTrackRef.current) {
+    // 1. Audio track / transceiver: Standard WebRTC m-line 0 (ALWAYS sendrecv)
+    const audioTrack = localStreamRef.current?.getAudioTracks()[0];
+    if (audioTrack) {
       try {
-        pc.addTrack(screenShareTrackRef.current, localStreamRef.current || new MediaStream());
+        pc.addTrack(audioTrack, localStreamRef.current);
       } catch (e) {
-        console.warn('[WebRTC] add screen share track note:', e);
+        console.warn('[WebRTC] add audio track warning:', e);
       }
-    } else if (localStreamRef.current) {
-      const videoTrack = localStreamRef.current.getVideoTracks()[0];
-      if (videoTrack) {
-        try { pc.addTrack(videoTrack, localStreamRef.current); } catch (e) {}
-      }
+    } else {
+      try {
+        pc.addTransceiver('audio', { direction: 'sendrecv' });
+      } catch (e) {}
     }
 
-    if (localStreamRef.current) {
-      const audioTrack = localStreamRef.current.getAudioTracks()[0];
-      if (audioTrack) {
-        try { pc.addTrack(audioTrack, localStreamRef.current); } catch (e) {}
+    // 2. Video track / transceiver: Standard WebRTC m-line 1 (ALWAYS sendrecv)
+    const videoTrack = screenShareTrackRef.current || localStreamRef.current?.getVideoTracks()[0];
+    if (videoTrack) {
+      try {
+        pc.addTrack(videoTrack, localStreamRef.current || new MediaStream());
+      } catch (e) {
+        console.warn('[WebRTC] add video track warning:', e);
       }
+    } else {
+      try {
+        pc.addTransceiver('video', { direction: 'sendrecv' });
+      } catch (e) {}
     }
 
-    // Ensure audio and video transceivers exist so reception is guaranteed even if local device lacks mic/camera
-    const senders = pc.getSenders();
-    const hasAudioSender = senders.some(s => s.track && s.track.kind === 'audio');
-    const hasVideoSender = senders.some(s => s.track && s.track.kind === 'video');
-    if (!hasAudioSender) {
-      try { pc.addTransceiver('audio', { direction: 'recvonly' }); } catch (e) {}
-    }
-    if (!hasVideoSender) {
-      try { pc.addTransceiver('video', { direction: screenShareTrackRef.current ? 'sendrecv' : 'recvonly' }); } catch (e) {}
-    }
+    // Guarantee all transceivers allow two-way transmission
+    try {
+      if (pc.getTransceivers) {
+        pc.getTransceivers().forEach(tr => {
+          if (tr.direction !== 'sendrecv') {
+            tr.direction = 'sendrecv';
+          }
+        });
+      }
+    } catch (e) {}
 
     // Remote track arrived
     pc.ontrack = (event) => {
@@ -841,10 +871,7 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
 
       try {
         state.isMakingOffer = true;
-        const offer = await pc.createOffer({
-          offerToReceiveAudio: true,
-          offerToReceiveVideo: true
-        });
+        const offer = await pc.createOffer();
         if (pc.signalingState !== 'stable') return;
         await pc.setLocalDescription(offer);
         if (socket) {
@@ -867,11 +894,13 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
 
     pc.onnegotiationneeded = () => {
       // Perfect Negotiation safely resolves glare and lets any participant start/stop screen share
-      makeOffer();
+      if (pc.signalingState === 'stable') {
+        makeOffer();
+      }
     };
 
     // Trigger offer immediately if designated initiator!
-    if (isInitiator) {
+    if (isInitiator && pc.signalingState === 'stable') {
       makeOffer();
     }
 
@@ -883,6 +912,13 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
   // ----------------------------------------------------
   const handleJoinMeeting = (confirmedName) => {
     setInLobby(false);
+
+    if (localStreamRef.current) {
+      const at = localStreamRef.current.getAudioTracks()[0];
+      if (at) at.enabled = !isAudioMuted;
+      const vt = localStreamRef.current.getVideoTracks()[0];
+      if (vt) vt.enabled = !isVideoOff;
+    }
 
     const rawSocketUrl = import.meta.env.VITE_BACKEND_URL || (window.location.hostname === 'localhost' ? '/' : 'https://intellmeet-backend-uuk5.onrender.com');
     const socketUrl = rawSocketUrl.trim().replace(/\/$/, '');
@@ -953,6 +989,31 @@ export const MeetingRoomPage = ({ roomId, onLeaveRoom, onViewSummary, onCancelLo
           }
           console.log(`[WebRTC] Glare collision detected: polite peer rolling back local offer for ${callerSocketId}`);
           await pc.setLocalDescription({ type: 'rollback' });
+        }
+
+        // Ensure local audio and video tracks are attached to the transceivers before answering
+        const audioTrack = localStreamRef.current?.getAudioTracks()[0];
+        const videoTrack = screenShareTrackRef.current || localStreamRef.current?.getVideoTracks()[0];
+        const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
+
+        if (audioTrack) {
+          const audioTr = transceivers.find(t => t.sender?.track?.kind === 'audio' || (!t.sender?.track && t.receiver?.track?.kind === 'audio'));
+          if (audioTr) {
+            audioTr.direction = 'sendrecv';
+            if (audioTr.sender && audioTr.sender.track !== audioTrack) {
+              await audioTr.sender.replaceTrack(audioTrack).catch(() => {});
+            }
+          }
+        }
+
+        if (videoTrack) {
+          const videoTr = transceivers.find(t => t.sender?.track?.kind === 'video' || (!t.sender?.track && t.receiver?.track?.kind === 'video'));
+          if (videoTr) {
+            videoTr.direction = 'sendrecv';
+            if (videoTr.sender && videoTr.sender.track !== videoTrack) {
+              await videoTr.sender.replaceTrack(videoTrack).catch(() => {});
+            }
+          }
         }
 
         await pc.setRemoteDescription(new RTCSessionDescription(sdp));
